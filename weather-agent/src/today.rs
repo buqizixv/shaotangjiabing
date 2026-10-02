@@ -106,8 +106,14 @@ script_mod! {
                 }
             }
             View{ width: Fill height: Fit flow: Right spacing: 8 align: Align{y: 0.5}
-                city_button := View{ width: Fit height: Fit flow: Down spacing: 3 cursor: MouseCursor.Hand
-                    city := Head{ width: Fit text: "北京 · 中国" }
+                city_button := View{ width: Fit height: 48 flow: Down spacing: 3 cursor: MouseCursor.Hand show_bg: true
+                    align: Align{y: 0.5}
+                    draw_bg +: { color: #00000000 }
+                    city_line := View{width: Fit height: Fit flow: Right spacing: 6 align: Align{y: 0.5}
+                        city := Head{ width: Fit text: "北京 · 中国" }
+                        city_chevron := Label{width: Fit height: Fit padding: 0 margin: 0 text: "⌄"
+                            draw_text +: {color: #F3A44D text_style: theme.font_bold{font_size: 12.0}}}
+                    }
                     stamp := Muted{ text: "此刻天气" }
                 }
                 place_switch := PlaceAction{}
@@ -280,7 +286,7 @@ impl TodayScreen {
 
     pub fn render(&mut self, cx: &mut Cx, state: &WeatherState, profile: &WeatherProfile) {
         let city = state.city();
-        self.view.widget(cx, ids!(hero)).widget(cx, ids!(content)).widget(cx, ids!(city_button)).label(cx, ids!(city))
+        self.view.widget(cx, ids!(hero)).widget(cx, ids!(content)).widget(cx, ids!(city_button)).widget(cx, ids!(city_line)).label(cx, ids!(city))
             .set_text(cx, &format!("{} · {}", city.name, city.en));
         let status = match &state.status {
             WxStatus::Idle => "正在连接天气".to_string(),
@@ -308,7 +314,7 @@ impl TodayScreen {
         let Some(forecast) = state.forecast.as_ref() else {
             self.set_weather_background(cx, None, true);
             let content = self.view.widget(cx, ids!(hero)).widget(cx, ids!(content));
-            content.label(cx, ids!(stamp)).set_text(cx, &model::today_local());
+            content.widget(cx, ids!(city_button)).label(cx, ids!(stamp)).set_text(cx, &model::today_local());
             content.label(cx, ids!(condition)).set_text(cx, "正在获取当地天气…");
             self.view.label(cx, ids!(morning)).set_text(cx, "天气数据到达后，为你整理今天的穿衣和出行建议。");
             self.view.label(cx, ids!(scene_answer)).set_text(cx, "天气暂不可用，先不猜晾晒时段；联网后会结合降水和风更新建议。");
@@ -347,7 +353,7 @@ impl TodayScreen {
         crate::ui::tint(&content.label(cx, ids!(weather_icon)), cx, ink);
         crate::ui::tint(&content.label(cx, ids!(condition)), cx, ink);
         let stamp = current.and_then(|v| v.time.as_ref()).map(|t| format!("当地 · {}", model::hhmm(t))).unwrap_or_else(|| model::today_local());
-        content.label(cx, ids!(stamp)).set_text(cx, &stamp);
+        content.widget(cx, ids!(city_button)).label(cx, ids!(stamp)).set_text(cx, &stamp);
 
         let daily = f.daily.as_ref();
         let today_i = daily.and_then(|d| d.time.iter().position(|d| d == &model::today_local())).unwrap_or(0);
