@@ -106,8 +106,8 @@ script_mod! {
                 }
             }
             View{ width: Fill height: Fit flow: Right spacing: 8 align: Align{y: 0.5}
-                View{ width: Fill height: Fit flow: Down spacing: 3
-                    city := Head{ text: "北京 · 中国" }
+                city_button := View{ width: Fit height: Fit flow: Down spacing: 3 cursor: MouseCursor.Hand
+                    city := Head{ width: Fit text: "北京 · 中国" }
                     stamp := Muted{ text: "此刻天气" }
                 }
                 place_switch := PlaceAction{}
@@ -260,7 +260,9 @@ pub struct TodayScreen {
 
 impl TodayScreen {
     pub fn switch_hit(&self, cx: &mut Cx, actions: &Actions) -> bool {
-        self.view.widget(cx, ids!(hero)).widget(cx, ids!(content)).view(cx, ids!(place_switch)).finger_up(actions).is_some()
+        let content = self.view.widget(cx, ids!(hero)).widget(cx, ids!(content));
+        content.view(cx, ids!(city_button)).finger_up(actions).is_some()
+            || content.view(cx, ids!(place_switch)).finger_up(actions).is_some()
     }
 
     pub fn scene_prompt_hit(&self, cx: &mut Cx, actions: &Actions) -> Option<usize> {
@@ -278,7 +280,7 @@ impl TodayScreen {
 
     pub fn render(&mut self, cx: &mut Cx, state: &WeatherState, profile: &WeatherProfile) {
         let city = state.city();
-        self.view.widget(cx, ids!(hero)).widget(cx, ids!(content)).label(cx, ids!(city))
+        self.view.widget(cx, ids!(hero)).widget(cx, ids!(content)).widget(cx, ids!(city_button)).label(cx, ids!(city))
             .set_text(cx, &format!("{} · {}", city.name, city.en));
         let status = match &state.status {
             WxStatus::Idle => "正在连接天气".to_string(),

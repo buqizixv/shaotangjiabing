@@ -42,6 +42,8 @@ pub enum WxStatus {
 pub struct WeatherState {
     pub city: usize,
     pub custom_city: Option<model::City>,
+    /// Cities explicitly chosen by the user, newest/current selection first.
+    pub saved_cities: Vec<model::City>,
     pub forecast: Option<Forecast>,
     pub status: WxStatus,
     pub flight: Option<(LiveId, usize)>,
@@ -65,6 +67,7 @@ impl WeatherState {
         Self {
             city: 0,
             custom_city: None,
+            saved_cities: vec![model::CITIES[0].clone()],
             forecast: None,
             status: WxStatus::Idle,
             flight: None,
@@ -108,6 +111,9 @@ impl WeatherState {
     }
 
     pub fn select_location(&mut self, city: model::City) {
+        self.saved_cities.retain(|saved| saved.lat != city.lat || saved.lon != city.lon);
+        self.saved_cities.insert(0, city.clone());
+        self.saved_cities.truncate(16);
         self.custom_city = Some(city);
         self.place_results.clear();
         self.place_status = "已选择地区".into();
@@ -130,6 +136,7 @@ impl WeatherState {
         self.place_results.clear();
         // 中文单字有意义（"天" → 天津 / 天水 / 天门 / ...）；1 字就开搜。
         if query.chars().count() < 1 {
+            if let Some((id, _)) = self.place_flight.take() { cx.cancel_http_request(id); }
             self.place_status = "输入地区再搜索".into();
             return;
         }

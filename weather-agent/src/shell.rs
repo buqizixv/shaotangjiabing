@@ -147,7 +147,10 @@ impl Shell {
         let care_reminders = self.profile.care_reminders.iter().map(|r| serde_json::json!({
             "contact_index":r.contact_index,"event_key":r.event_key,"date":r.date,"created_at":r.created_at,"fact":r.fact,"draft":r.draft,"sent":r.sent,
         })).collect::<Vec<_>>();
-        let value = serde_json::json!({"wardrobe":self.profile.wardrobe,"factors":self.profile.factors,"family_cities":cities,"care_contacts":care_contacts,"care_reminders":care_reminders});
+        let saved_cities = self.wx.saved_cities.iter().map(|c| serde_json::json!({"name":c.name,"en":c.en,"lat":c.lat,"lon":c.lon})).collect::<Vec<_>>();
+        let current_city = self.wx.city();
+        let current_city = serde_json::json!({"name":current_city.name,"en":current_city.en,"lat":current_city.lat,"lon":current_city.lon});
+        let value = serde_json::json!({"wardrobe":self.profile.wardrobe,"factors":self.profile.factors,"family_cities":cities,"care_contacts":care_contacts,"care_reminders":care_reminders,"weather_cities":saved_cities,"weather_current_city":current_city});
         if let Ok(bytes) = serde_json::to_vec(&value) { storage.set(cx, "weather-agent/profile.json", bytes); }
     }
 
@@ -306,6 +309,20 @@ impl Shell {
                     sent: v.get("sent").and_then(|x| x.as_bool()).unwrap_or(false),
                 })
             }).collect()).unwrap_or_default();
+            self.wx.saved_cities = value.get("weather_cities").and_then(|v| v.as_array()).map(|items| items.iter().filter_map(|v| {
+                let name = v.get("name")?.as_str()?.to_string();
+                let en = v.get("en").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                Some(crate::model::City::custom(name, en, v.get("lat")?.as_f64()?, v.get("lon")?.as_f64()?))
+            }).collect()).filter(|cities: &Vec<crate::model::City>| !cities.is_empty()).unwrap_or_else(|| vec![crate::model::CITIES[0].clone()]);
+            if let Some(current) = value.get("weather_current_city") {
+                if let (Some(name), Some(lat), Some(lon)) = (current.get("name").and_then(|x| x.as_str()), current.get("lat").and_then(|x| x.as_f64()), current.get("lon").and_then(|x| x.as_f64())) {
+                    let en = current.get("en").and_then(|x| x.as_str()).unwrap_or("");
+                    self.wx.custom_city = Some(crate::model::City::custom(name.to_string(), en.to_string(), lat, lon));
+                }
+            } else if let Some(city) = self.wx.saved_cities.first().cloned() {
+                self.wx.custom_city = Some(city);
+            }
+            self.wx.start(cx);
             // Migrate the earlier city-only setting without discarding it.
             for city in self.profile.family_cities.iter() {
                 if !self.profile.care_contacts.iter().any(|c| c.city.lat == city.lat && c.city.lon == city.lon) {
@@ -405,7 +422,7 @@ impl Shell {
         self.nav(cx).set_visible(cx, false);
         let wx = self.wx.clone();
         self.picker(cx).borrow_mut::<PlacePickerScreen>()
-            .map(|mut s| s.render(cx, &wx));
+            .map(|mut s| { s.show_cities(cx); s.render(cx, &wx); });
     }
 
     /// 关掉覆盖层。
@@ -886,19 +903,65 @@ impl Shell {
         }
     }
 
-    /// 地区切换覆盖层上的动作：返回 / 选结果 / 提交搜索。
+    /// City manager -> popular city/search -> result selection.
     fn handle_picker(&mut self, cx: &mut Cx, actions: &Actions) {
         let page = self.picker(cx);
 
         if page.borrow::<PlacePickerScreen>().is_some_and(|s| s.back_hit(cx, actions)) {
+            let discovering = page.borrow::<PlacePickerScreen>().is_some_and(|s| s.is_discovering());
+            if discovering {
+                page.borrow_mut::<PlacePickerScreen>().map(|mut s| s.show_cities(cx));
+                let wx = self.wx.clone();
+                page.borrow_mut::<PlacePickerScreen>().map(|mut s| s.render(cx, &wx));
+            } else { self.close_picker(cx); }
+            return;
+        }
+        if page.borrow::<PlacePickerScreen>().is_some_and(|s| s.close_hit(cx, actions)) {
             self.close_picker(cx);
             return;
         }
 
-        if let Some(i) = page.borrow::<PlacePickerScreen>().and_then(|s| s.place_hit(cx, actions)) {
+        let discovering = page.borrow::<PlacePickerScreen>().is_some_and(|s| s.is_discovering());
+        if !discovering {
+            if page.borrow::<PlacePickerScreen>().is_some_and(|s| s.open_search_hit(cx, actions)) {
+                page.borrow_mut::<PlacePickerScreen>().map(|mut s| s.enter_discover(cx));
+                self.wx.search_city(cx, "");
+                return;
+            }
+            if let Some(i) = page.borrow::<PlacePickerScreen>().and_then(|s| s.saved_hit(cx, actions)) {
+                if let Some(place) = self.wx.saved_cities.get(i).cloned() {
+                    self.wx.select_location(place);
+                    self.wx.start(cx);
+                    self.save_profile(cx);
+                    self.close_picker(cx);
+                }
+                return;
+            }
+            return;
+        }
+
+        if page.borrow::<PlacePickerScreen>().is_some_and(|s| s.cancel_hit(cx, actions)) {
+            page.borrow_mut::<PlacePickerScreen>().map(|mut s| s.show_cities(cx));
+            let wx = self.wx.clone();
+            page.borrow_mut::<PlacePickerScreen>().map(|mut s| s.render(cx, &wx));
+            return;
+        }
+
+        if let Some(i) = page.borrow::<PlacePickerScreen>().and_then(|s| s.result_hit(cx, actions)) {
             if let Some(place) = self.wx.place_results.get(i).cloned() {
                 self.wx.select_location(place);
                 self.wx.start(cx);
+                self.save_profile(cx);
+                self.close_picker(cx);
+            }
+            return;
+        }
+        if let Some(i) = page.borrow::<PlacePickerScreen>().and_then(|s| s.popular_hit(cx, actions)) {
+            let place = if i < 9 { Some(crate::model::CITIES[i].clone()) } else { crate::place_picker::international_cities_for_shell(i - 9) };
+            if let Some(place) = place {
+                self.wx.select_location(place);
+                self.wx.start(cx);
+                self.save_profile(cx);
                 self.close_picker(cx);
             }
             return;
@@ -915,17 +978,15 @@ impl Shell {
                 None
             }
         });
-        let search_clicked = page.borrow::<PlacePickerScreen>()
-            .is_some_and(|s| s.search_hit(cx, actions));
         if let Some(text) = changed_text {
-            self.wx.search_city(cx, &text);
-            let wx = self.wx.clone();
-            page.borrow_mut::<PlacePickerScreen>()
-                .map(|mut s| s.render(cx, &wx));
-        } else if search_clicked {
-            let text = page.borrow::<PlacePickerScreen>()
-                .map(|s| s.search_input(cx).text())
-                .unwrap_or_default();
+            if text.trim().is_empty() {
+                self.wx.search_city(cx, "");
+                page.borrow_mut::<PlacePickerScreen>().map(|mut s| s.set_searching(cx, false));
+                let wx = self.wx.clone();
+                page.borrow_mut::<PlacePickerScreen>().map(|mut s| s.render(cx, &wx));
+                return;
+            }
+            page.borrow_mut::<PlacePickerScreen>().map(|mut s| s.set_searching(cx, true));
             self.wx.search_city(cx, &text);
             let wx = self.wx.clone();
             page.borrow_mut::<PlacePickerScreen>()
@@ -965,7 +1026,7 @@ impl Shell {
             return;
         }
 
-        // 地区入口打开搜索 picker。
+        // Tap the displayed city name or its adjacent control to open city management.
         if page.borrow::<TodayScreen>().is_some_and(|s| s.switch_hit(cx, actions)) {
             self.open_picker(cx);
         }
