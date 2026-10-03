@@ -2,7 +2,7 @@
 
 一个运行在 OctoSense 中的天气助手应用。用户可以查看天气、切换和搜索城市、保存天气偏好，并通过 OctoSense 宿主的助手服务提问。
 
-> **应用使用 OctoScript 编写。** 主要源码是 [`main.splash`](octoscript-weather-assistant/bundle/main.splash)。GitHub 的语言统计目前不识别 `.splash` 扩展名，因此语言栏可能不会显示 OctoScript；这不代表项目使用 Rust。Rust 负责 OctoSense 的部分运行时和开发工具，不是本应用源码。
+> **应用使用 OctoScript 编写。** 主要源码是 [`main.splash`](octoscript-weather-assistant/bundle/main.splash)。
 
 ## 为什么开发这个应用
 
