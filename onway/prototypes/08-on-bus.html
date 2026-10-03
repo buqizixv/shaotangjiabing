@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>在途 · 乘车中</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#F5F5F7;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','SF Pro Text','PingFang SC','Helvetica Neue',sans-serif;-webkit-font-smoothing:antialiased;gap:16px;padding:20px}
+.nav-link{font-size:13px;color:#86868B;text-decoration:none;display:flex;align-items:center;gap:4px}.nav-link:hover{color:#0066CC}
+.card{width:360px;height:509px;background:#272729;border-radius:28px;position:relative;overflow:hidden;display:flex;flex-direction:column;color:#FFF;box-shadow:0 25px 60px rgba(0,0,0,0.12),inset 0 0 0 0.5px rgba(255,255,255,0.06)}
+.card-body{flex:1;padding:32px 28px 0;display:flex;flex-direction:column}
+.card-footer{padding:16px 28px 28px;display:flex;justify-content:space-between;align-items:flex-end}
+.scene-label{font-size:13px;font-weight:500;color:rgba(255,255,255,0.4);letter-spacing:0.3px;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.line-info{font-size:16px;color:#2997FF;font-weight:600;margin-bottom:20px}
+.timeline{position:relative;padding-left:24px;margin-bottom:8px}
+.timeline::before{content:'';position:absolute;left:7px;top:8px;bottom:8px;width:2px;background:rgba(255,255,255,0.08)}
+.t-item{position:relative;padding:7px 0;font-size:14px;color:rgba(255,255,255,0.3)}
+.t-dot{position:absolute;left:-24px;top:11px;width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,0.12)}
+.t-passed{color:#2997FF}
+.t-passed .t-dot{background:#2997FF}
+.t-passed::after{content:'✓';margin-left:6px;font-size:11px;opacity:0.6}
+.t-current{color:#FFF;font-weight:600;font-size:16px}
+.t-current .t-dot{background:#2997FF;width:12px;height:12px;left:-26px;top:9px;box-shadow:0 0 0 4px rgba(41,151,255,0.2)}
+.t-current::before{content:'';position:absolute;left:-24px;top:8px;bottom:8px}
+.t-dots{color:rgba(255,255,255,0.15);padding:4px 0;font-size:12px}
+.t-dest{color:rgba(255,255,255,0.5);font-weight:500}
+.t-dest .t-dot{background:rgba(255,255,255,0.25);width:10px;height:10px;left:-25px;border-radius:2px}
+.divider{height:1px;background:rgba(255,255,255,0.08);margin:14px 0}
+.remaining{font-size:26px;font-weight:700;margin-bottom:6px}
+.info-sub{font-size:14px;color:rgba(255,255,255,0.45);padding:3px 0}
+.data-source{font-size:11px;color:rgba(255,255,255,0.2);margin-top:auto;padding-top:12px}
+.user-btn{width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.08);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.user-btn:hover{background:rgba(255,255,255,0.14)}
+.pill-btn{background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.5);border:none;border-radius:14px;padding:9px 18px;font-size:13px;cursor:pointer;font-family:inherit}
+.pill-btn:hover{background:rgba(255,255,255,0.1);color:rgba(255,255,255,0.7)}
+</style>
+</head>
+<body>
+<a href="index.html" class="nav-link"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>返回导航</a>
+<div class="card">
+  <div class="card-body">
+    <div class="scene-label">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><rect x="3.5" y="1.5" width="9" height="10" rx="2" stroke="currentColor" stroke-width="1.1"/><line x1="3.5" y1="8" x2="12.5" y2="8" stroke="currentColor" stroke-width="1.1"/><circle cx="5.8" cy="9.8" r="0.7" fill="currentColor"/><circle cx="10.2" cy="9.8" r="0.7" fill="currentColor"/><path d="M5.5 13l-1 1.5M10.5 13l1 1.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>
+      乘车中
+    </div>
+    <div class="line-info">15号线 · 顺义方向</div>
+
+    <div class="timeline">
+      <div class="t-item t-passed"><div class="t-dot"></div>望京西</div>
+      <div class="t-item t-passed"><div class="t-dot"></div>望京</div>
+      <div class="t-item t-current"><div class="t-dot"></div>崔各庄</div>
+      <div class="t-item"><div class="t-dot"></div>马泉营</div>
+      <div class="t-item"><div class="t-dot"></div>孙河</div>
+      <div class="t-dots">· · ·</div>
+      <div class="t-item t-dest"><div class="t-dot"></div>清华东路西口</div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="remaining">剩余 4 站</div>
+    <div class="info-sub">下车站：清华东路西口站</div>
+    <div class="info-sub">预计 <span style="color:#2997FF;font-weight:500">7:52</span> 到达目的地</div>
+
+    <div class="data-source">进度基于定位 · 10 秒前</div>
+  </div>
+  <div class="card-footer">
+    <button class="user-btn" onclick="window.location.href='16-settings.html'" title="设置与历史">
+      <svg width="18" height="18" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="7.5" r="3" stroke="rgba(255,255,255,0.5)" stroke-width="1.5" fill="none"/><path d="M3.5 18c0-3.6 2.9-6.5 6.5-6.5s6.5 2.9 6.5 6.5" stroke="rgba(255,255,255,0.5)" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
+    </button>
+    <button class="pill-btn" onclick="window.location.href='09-transfer.html'">已经下车</button>
+  </div>
+</div>
+</body>
+</html>

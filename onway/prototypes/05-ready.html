@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>在途 · 准备出门</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#F5F5F7;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','SF Pro Text','PingFang SC','Helvetica Neue',sans-serif;-webkit-font-smoothing:antialiased;gap:16px;padding:20px}
+.nav-link{font-size:13px;color:#86868B;text-decoration:none;display:flex;align-items:center;gap:4px}.nav-link:hover{color:#0066CC}
+.card{width:360px;height:509px;background:#272729;border-radius:28px;position:relative;overflow:hidden;display:flex;flex-direction:column;color:#FFF;box-shadow:0 25px 60px rgba(0,0,0,0.12),inset 0 0 0 0.5px rgba(255,255,255,0.06)}
+.card-body{flex:1;padding:32px 28px 0;display:flex;flex-direction:column}
+.card-footer{padding:16px 28px 28px;display:flex;justify-content:space-between;align-items:flex-end}
+.scene-label{font-size:13px;font-weight:500;color:rgba(255,255,255,0.4);letter-spacing:0.3px;margin-bottom:20px;display:flex;align-items:center;gap:8px}
+.primary-value{font-size:34px;font-weight:700;letter-spacing:-0.8px;line-height:1.1;margin-bottom:8px}
+.primary-sub{font-size:15px;color:rgba(255,255,255,0.45);margin-bottom:4px;line-height:1.5}
+.accent{color:#2997FF}
+.warning{color:#FF9F0A}
+.divider{height:1px;background:rgba(255,255,255,0.08);margin:18px 0}
+.info-row{display:flex;justify-content:space-between;align-items:center;font-size:14px;padding:5px 0}
+.info-label{color:rgba(255,255,255,0.4);font-size:13px}
+.info-value{color:rgba(255,255,255,0.8);font-weight:500;font-size:14px}
+.warning-row{display:flex;align-items:center;gap:8px;font-size:14px;color:#FF9F0A;padding:8px 0}
+.suggestion{font-size:18px;font-weight:600;color:#2997FF;padding:6px 0}
+.data-source{font-size:11px;color:rgba(255,255,255,0.2);margin-top:auto;padding-top:16px}
+.user-btn{width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.08);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.user-btn:hover{background:rgba(255,255,255,0.14)}
+.correction{font-size:13px;color:rgba(255,255,255,0.25);cursor:pointer;text-decoration:none}
+.correction:hover{color:rgba(255,255,255,0.5)}
+</style>
+</head>
+<body>
+<a href="index.html" class="nav-link"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>返回导航</a>
+<div class="card">
+  <div class="card-body">
+    <div class="scene-label">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M2.5 8.5l5-6 5 6M4.5 7.5v5.5h2.5v-3h2v3h2.5v-5.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      准备出门
+    </div>
+    <div class="primary-value">预计 42 分钟到达</div>
+    <div class="primary-sub">中关村软件园</div>
+    <div class="primary-sub" style="font-size:13px;color:rgba(255,255,255,0.3)">步行 → 15号线（顺义方向）→ 步行</div>
+
+    <div class="divider"></div>
+
+    <div class="info-row">
+      <span class="info-label">平时耗时</span>
+      <span class="info-value">约 35 分钟</span>
+    </div>
+    <div class="warning-row">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 2L1.5 13.5h13L8 2z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><line x1="8" y1="7" x2="8" y2="10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><circle cx="8" cy="11.8" r="0.6" fill="currentColor"/></svg>
+      今天比平常多约 7 分钟
+    </div>
+    <div class="suggestion">建议 7:15 前出门</div>
+
+    <div class="data-source">路线数据 · 高德 · 2 分钟前更新</div>
+  </div>
+  <div class="card-footer">
+    <button class="user-btn" onclick="window.location.href='16-settings.html'" title="设置与历史">
+      <svg width="18" height="18" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="7.5" r="3" stroke="rgba(255,255,255,0.5)" stroke-width="1.5" fill="none"/><path d="M3.5 18c0-3.6 2.9-6.5 6.5-6.5s6.5 2.9 6.5 6.5" stroke="rgba(255,255,255,0.5)" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
+    </button>
+    <a class="correction" href="06-walking-to-station.html">模拟离家出发 →</a>
+  </div>
+</div>
+</body>
+</html>

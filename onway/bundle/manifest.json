@@ -1,0 +1,28 @@
+{
+  "agent": null,
+  "capabilities": [
+    "storage",
+    "location"
+  ],
+  "compute": {
+    "instruction_budget": null,
+    "memory_bytes": null
+  },
+  "id": "onway",
+  "integrity": {
+    "bundle_blake3": "beed089e9c27f4e418bd8f4c6f919a62094dd46918d3d23ff3b0286045605646",
+    "signature": {
+      "key_id": "dev",
+      "value": "a2db740a72c3ab63e8cf3c665a5e7b7324c6c2aff2ca1211e56e1d371e88ef7e4c7f076a3df41853e2b3a31651c1b44e91de8a61a403df2404f1109663444402"
+    }
+  },
+  "name": "在途",
+  "network": {
+    "hosts": []
+  },
+  "schema": 1,
+  "storage": {
+    "max_bytes": null
+  },
+  "version": "0.4.2"
+}

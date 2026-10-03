@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>在途 · 行程取消</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#F5F5F7;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','SF Pro Text','PingFang SC','Helvetica Neue',sans-serif;-webkit-font-smoothing:antialiased;gap:16px;padding:20px}
+.nav-link{font-size:13px;color:#86868B;text-decoration:none;display:flex;align-items:center;gap:4px}.nav-link:hover{color:#0066CC}
+.card{width:360px;height:509px;background:#FFFFFF;border-radius:28px;position:relative;overflow:hidden;display:flex;flex-direction:column;color:#1D1D1F;box-shadow:0 25px 60px rgba(0,0,0,0.06),inset 0 0 0 0.5px rgba(0,0,0,0.04)}
+.card-body{flex:1;padding:32px 28px 0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+.card-footer{padding:16px 28px 28px;display:flex;justify-content:space-between;align-items:flex-end}
+.cancel-icon{width:56px;height:56px;border-radius:50%;background:#F5F5F7;display:flex;align-items:center;justify-content:center;margin-bottom:20px}
+.cancel-title{font-size:22px;font-weight:700;margin-bottom:10px}
+.cancel-desc{font-size:14px;color:#86868B;line-height:1.6;margin-bottom:32px;max-width:270px}
+.divider{height:1px;background:#E5E5EA;width:100%;margin-bottom:20px}
+.cancel-info{font-size:14px;color:#86868B;margin-bottom:8px}
+.cancel-note{font-size:13px;color:#C7C7CC;margin-bottom:24px}
+.link-text{font-size:14px;color:#0066CC;text-decoration:none;margin-bottom:20px;display:block}
+.action-btn{display:block;width:80%;background:#0066CC;color:#fff;border:none;border-radius:16px;padding:14px;font-size:16px;font-weight:600;cursor:pointer;font-family:inherit;text-align:center}
+.user-btn{width:36px;height:36px;border-radius:50%;background:rgba(0,0,0,0.04);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center}
+</style>
+</head>
+<body>
+<a href="index.html" class="nav-link"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>返回导航</a>
+<div class="card">
+  <div class="card-body">
+    <div class="cancel-icon">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M19 12H5M5 12l5-5M5 12l5 5" stroke="#86868B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="cancel-title">行程已取消</div>
+    <div class="cancel-desc">你已返回起点范围，本次临时行程已自动取消</div>
+
+    <div class="divider"></div>
+
+    <div class="cancel-info">临时记录时长：12 分钟</div>
+    <div class="cancel-note">本次不计入通勤历史</div>
+    <a href="#" class="link-text">这是一次有效通勤？补记 →</a>
+    <button class="action-btn" onclick="window.location.href='05-ready.html'">好的</button>
+  </div>
+  <div class="card-footer">
+    <button class="user-btn" onclick="window.location.href='16-settings.html'" title="设置与历史">
+      <svg width="18" height="18" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="7.5" r="3" stroke="rgba(0,0,0,0.25)" stroke-width="1.5" fill="none"/><path d="M3.5 18c0-3.6 2.9-6.5 6.5-6.5s6.5 2.9 6.5 6.5" stroke="rgba(0,0,0,0.25)" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
+    </button>
+    <span style="font-size:11px;color:#C7C7CC">在途 Onway</span>
+  </div>
+</div>
+</body>
+</html>

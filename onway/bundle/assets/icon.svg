@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="cardGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#e8e8ed"/>
+    </linearGradient>
+    <linearGradient id="cardGrad2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f5f5f7"/>
+      <stop offset="100%" stop-color="#d1d1d6"/>
+    </linearGradient>
+    <linearGradient id="routeGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#0066cc"/>
+      <stop offset="100%" stop-color="#2997ff"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="24" flood-color="#000000" flood-opacity="0.15"/>
+    </filter>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="20" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- 背景圆角矩形 -->
+  <rect x="0" y="0" width="1024" height="1024" rx="225" fill="#1d1d1f"/>
+
+  <!-- 底层卡片（最浅） -->
+  <rect x="180" y="380" width="420" height="420" rx="80" fill="url(#cardGrad2)" opacity="0.6" filter="url(#shadow)"/>
+
+  <!-- 中层卡片 -->
+  <rect x="280" y="280" width="420" height="420" rx="80" fill="url(#cardGrad2)" opacity="0.85" filter="url(#shadow)"/>
+
+  <!-- 顶层卡片（最亮） -->
+  <rect x="380" y="180" width="420" height="420" rx="80" fill="url(#cardGrad)" filter="url(#shadow)"/>
+
+  <!-- 通勤路线（从左下往右上） -->
+  <path d="M 200 750 Q 350 750 400 650 T 550 500 T 700 350"
+        stroke="url(#routeGrad)" stroke-width="56" fill="none" stroke-linecap="round" filter="url(#shadow)"/>
+
+  <!-- 路线终点圆点 -->
+  <circle cx="700" cy="350" r="72" fill="#2997ff" filter="url(#glow)"/>
+</svg>

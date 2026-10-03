@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "subtitle": "只显示当前该看的那张通勤卡片",
+  "description": "在途（Onway）产品原型预览版：以 17 张原型卡片展示欢迎、首次设置、步行、候车、乘车、换乘、到达、异常、设置与历史。支持保存地点名称、选择方案、修改偏好与阈值、手动补记及清空本地历史；预览中的路线、班次与初始历史为设计示例，尚未接入实时路线和班次服务。",
+  "category": "travel",
+  "keywords": ["onway", "commute", "transit", "在途", "通勤"],
+  "screenshots": ["screenshots/01-main.png", "screenshots/02-waiting.png", "screenshots/03-first-run.png"],
+  "icon": "assets/icon.svg",
+  "platforms": ["windows"],
+  "publisher": {
+    "name": "Replace with your publisher name",
+    "support": "https://example.com/support",
+    "privacy_policy_url": "https://example.com/privacy"
+  },
+  "release_notes": "v0.4.2：增加真实定位检查及当前位置标记，仅在使用定位页面时请求位置，检查时效与精度；定位失败保留已输入的地点。路线、班次仍为原型示例，未启用自动通勤记录。",
+  "age_rating": "all",
+  "license": "Apache-2.0"
+}

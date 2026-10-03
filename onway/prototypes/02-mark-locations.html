@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>在途 · 标记地点</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#F5F5F7;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','SF Pro Text','PingFang SC','Helvetica Neue',sans-serif;-webkit-font-smoothing:antialiased;gap:16px;padding:20px}
+.nav-link{font-size:13px;color:#86868B;text-decoration:none;display:flex;align-items:center;gap:4px}.nav-link:hover{color:#0066CC}
+.card{width:360px;height:509px;background:#272729;border-radius:28px;position:relative;overflow:hidden;display:flex;flex-direction:column;color:#FFF;box-shadow:0 25px 60px rgba(0,0,0,0.12),inset 0 0 0 0.5px rgba(255,255,255,0.06)}
+.card-body{flex:1;padding:32px 28px 0;display:flex;flex-direction:column}
+.card-body::-webkit-scrollbar{display:none}
+.card-footer{padding:16px 28px 28px}
+.step{font-size:12px;color:rgba(255,255,255,0.3);letter-spacing:0.5px;margin-bottom:8px}
+.title{font-size:28px;font-weight:700;letter-spacing:-0.5px;margin-bottom:28px}
+.location-group{margin-bottom:20px}
+.location-label{font-size:13px;color:rgba(255,255,255,0.4);margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.location-input{width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:14px 16px;font-size:15px;color:#FFF;font-family:inherit;outline:none}
+.location-input:focus{border-color:rgba(41,151,255,0.4)}
+.location-input::placeholder{color:rgba(255,255,255,0.2)}
+.location-filled{border-color:rgba(41,151,255,0.3);background:rgba(41,151,255,0.06)}
+.use-current{font-size:13px;color:#2997FF;margin-top:8px;cursor:pointer;display:flex;align-items:center;gap:4px}
+.map-preview{flex:1;background:rgba(255,255,255,0.03);border-radius:16px;display:flex;align-items:center;justify-content:center;margin-top:8px;min-height:100px;border:1px dashed rgba(255,255,255,0.06)}
+.map-placeholder{text-align:center;color:rgba(255,255,255,0.15)}
+.map-placeholder svg{margin-bottom:6px}
+.action-btn{display:block;width:100%;background:#2997FF;color:#fff;border:none;border-radius:16px;padding:15px;font-size:16px;font-weight:600;cursor:pointer;font-family:inherit;text-align:center}
+</style>
+</head>
+<body>
+<a href="index.html" class="nav-link"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>返回导航</a>
+<div class="card">
+  <div class="card-body">
+    <div class="step">第 1 步，共 3 步</div>
+    <div class="title">标记地点</div>
+    <div class="location-group">
+      <div class="location-label"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2.5 8.5l5-6 5 6M4.5 7.5v5.5h2.5v-3h2v3h2.5v-5.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>家</div>
+      <input class="location-input location-filled" value="朝阳区望京西园四区" readonly>
+    </div>
+    <div class="location-group">
+      <div class="location-label"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="3" y="3.5" width="10" height="10" rx="1.5" stroke="currentColor" stroke-width="1.2"/><rect x="5.5" y="6" width="2" height="2" rx="0.4" fill="currentColor" opacity="0.5"/><rect x="8.5" y="6" width="2" height="2" rx="0.4" fill="currentColor" opacity="0.5"/><rect x="5.5" y="9.5" width="2" height="2" rx="0.4" fill="currentColor" opacity="0.5"/><rect x="8.5" y="9.5" width="2" height="2" rx="0.4" fill="currentColor" opacity="0.5"/></svg>目的地</div>
+      <input class="location-input" placeholder="搜索或使用当前位置" readonly>
+      <div class="use-current"><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.3"/><path d="M8 1v3M8 12v3M1 8h3M12 8h3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>使用当前位置</div>
+    </div>
+    <div class="map-preview">
+      <div class="map-placeholder">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/><circle cx="12" cy="9" r="2" fill="rgba(255,255,255,0.15)"/></svg>
+        <div style="font-size:12px">地图预览</div>
+      </div>
+    </div>
+  </div>
+  <div class="card-footer">
+    <button class="action-btn" onclick="window.location.href='03-select-plan.html'">下一步：选择通勤方案</button>
+  </div>
+</div>
+</body>
+</html>
