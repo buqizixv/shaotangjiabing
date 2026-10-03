@@ -1,7 +1,7 @@
 # 天气助手（OctoScript 应用）
 
 ## 目标
-把现有 Rust 天气助手的主要使用体验迁移成符合 OctoSense App Hub 的 contained OctoScript bundle。重点按用户给的手机天气截图重新设计城市切换流程；界面采用清晰的中文天气卡片，不复用之前 Rust 桌面窗口的布局。
+实现符合 OctoSense App Hub 规范的 contained OctoScript 天气助手。重点按用户给的手机天气截图设计城市切换流程，并采用清晰的中文天气卡片界面。
 
 ## 页面与操作
 - 今天：当前城市入口（点击进入城市管理）、当前天气/体感/高低温、穿衣与出行建议、家庭城市提醒摘要、常用场景标签。

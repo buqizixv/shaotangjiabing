@@ -1,6 +1,6 @@
 # OctoScript 天气助手
 
-这是面向 OctoSense App Hub 的 contained OctoScript 天气应用，正式包位于 `bundle/`。原 Rust 天气客户端仍保留在仓库原目录；该目录单独提供 OctoSense 应用实现。
+这是面向 OctoSense App Hub 的 contained OctoScript 天气应用，正式包位于 `bundle/`。
 
 ## 功能
 
