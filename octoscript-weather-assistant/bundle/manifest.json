@@ -1,0 +1,24 @@
+{
+  "capabilities": [
+    "storage",
+    "net",
+    "octos.session.open",
+    "octos.turn.start"
+  ],
+  "id": "weather-assistant",
+  "integrity": {
+    "bundle_blake3": "1bf5861c78071e91fb0701f2d45e593c7efc1264ea92be58e44bb6f2fa72ee0b"
+  },
+  "name": "天气助手",
+  "network": {
+    "hosts": [
+      "api.open-meteo.com",
+      "geocoding-api.open-meteo.com"
+    ]
+  },
+  "schema": 1,
+  "storage": {
+    "max_bytes": 1048576
+  },
+  "version": "0.1.0"
+}

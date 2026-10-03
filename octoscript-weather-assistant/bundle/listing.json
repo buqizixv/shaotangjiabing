@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "subtitle": "天气、城市与个性化出行建议",
+  "description": "查看当前天气、逐小时与未来七天预报，按保存城市切换地点，在国内外热门城市中快速选择或搜索城市。可保存体感偏好、自定义天气标签和家庭关注城市；天气问答通过 OctoSense 助手提供，首次使用需要在宿主授权并配置 AI。家庭关注与提醒偏好保存在本机，本版本不发送 Matrix 消息。",
+  "category": "weather",
+  "keywords": ["天气", "城市", "预报", "出行", "天气助手"],
+  "screenshots": [
+    "screenshots/02-cities.png",
+    "screenshots/03-search.png",
+    "screenshots/04-search-jin.png",
+    "screenshots/06-mine.png"
+  ],
+  "icon": "assets/icon.svg",
+  "platforms": ["windows"],
+  "publisher": {
+    "name": "buqizixv",
+    "support": "https://github.com/buqizixv/shaotangjiabing/issues",
+    "privacy_policy_url": "https://github.com/buqizixv/shaotangjiabing/blob/main/octoscript-weather-assistant/PRIVACY.md"
+  },
+  "release_notes": "初始版本：天气预报、城市搜索与切换、偏好和家庭城市设置、OctoSense 助手问答。",
+  "age_rating": "all",
+  "license": "Apache-2.0"
+}

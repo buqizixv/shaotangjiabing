@@ -1,0 +1,398 @@
+let page = "today"
+let current_city = {name: "太原", admin1: "山西省", country: "中国", latitude: 37.8706, longitude: 112.5489}
+let cities = [current_city]
+let local_places = [
+    {name: "太原", admin1: "山西省", country: "中国", latitude: 37.8706, longitude: 112.5489}
+    {name: "万柏林区", admin1: "太原市 · 山西省", country: "中国", latitude: 37.8592, longitude: 112.5155}
+    {name: "晋源区", admin1: "太原市 · 山西省", country: "中国", latitude: 37.7156, longitude: 112.4779}
+    {name: "晋城", admin1: "山西省", country: "中国", latitude: 35.4900, longitude: 112.8510}
+    {name: "晋中", admin1: "山西省", country: "中国", latitude: 37.6870, longitude: 112.7527}
+    {name: "大同", admin1: "山西省", country: "中国", latitude: 40.0768, longitude: 113.3001}
+    {name: "阳泉", admin1: "山西省", country: "中国", latitude: 37.8567, longitude: 113.5805}
+    {name: "长治", admin1: "山西省", country: "中国", latitude: 36.1954, longitude: 113.1163}
+    {name: "临汾", admin1: "山西省", country: "中国", latitude: 36.0880, longitude: 111.5189}
+    {name: "运城", admin1: "山西省", country: "中国", latitude: 35.0264, longitude: 111.0075}
+    {name: "北京", admin1: "北京市", country: "中国", latitude: 39.9042, longitude: 116.4074}
+    {name: "上海", admin1: "上海市", country: "中国", latitude: 31.2304, longitude: 121.4737}
+    {name: "广州", admin1: "广东省", country: "中国", latitude: 23.1291, longitude: 113.2644}
+    {name: "深圳", admin1: "广东省", country: "中国", latitude: 22.5431, longitude: 114.0579}
+    {name: "天津", admin1: "天津市", country: "中国", latitude: 39.0842, longitude: 117.2010}
+    {name: "成都", admin1: "四川省", country: "中国", latitude: 30.5728, longitude: 104.0668}
+    {name: "重庆", admin1: "重庆市", country: "中国", latitude: 29.5630, longitude: 106.5516}
+    {name: "杭州", admin1: "浙江省", country: "中国", latitude: 30.2741, longitude: 120.1551}
+    {name: "南京", admin1: "江苏省", country: "中国", latitude: 32.0603, longitude: 118.7969}
+    {name: "武汉", admin1: "湖北省", country: "中国", latitude: 30.5928, longitude: 114.3055}
+    {name: "西安", admin1: "陕西省", country: "中国", latitude: 34.3416, longitude: 108.9398}
+    {name: "郑州", admin1: "河南省", country: "中国", latitude: 34.7466, longitude: 113.6254}
+    {name: "青岛", admin1: "山东省", country: "中国", latitude: 36.0671, longitude: 120.3826}
+    {name: "厦门", admin1: "福建省", country: "中国", latitude: 24.4798, longitude: 118.0894}
+    {name: "东京", admin1: "东京都", country: "日本", latitude: 35.6762, longitude: 139.6503}
+    {name: "伦敦", admin1: "英格兰", country: "英国", latitude: 51.5072, longitude: -0.1276}
+    {name: "纽约", admin1: "纽约州", country: "美国", latitude: 40.7128, longitude: -74.0060}
+]
+let preferences = ["怕冷", "怕热", "关注紫外线", "关注降雨"]
+let custom_tag = ""
+let family_cities = []
+let reminders_on = true
+let current_weather = nil
+let city_results = []
+let search_text = ""
+let search_status = "输入城市名搜索"
+let app_status = ""
+let chat_messages = []
+let question_text = ""
+
+fn save_data(){
+    fs.write("weather.json", {current_city: current_city, cities: cities, preferences: preferences, family_cities: family_cities, reminders_on: reminders_on, current_weather: current_weather}.to_json())
+}
+fn load_data(){
+    if fs.exists("weather.json") {
+        let stored = fs.read("weather.json").parse_json()
+        if stored != nil {
+            if stored.current_city != nil { current_city = stored.current_city }
+            if stored.cities != nil { cities = stored.cities }
+            if stored.preferences != nil { preferences = stored.preferences }
+            if stored.family_cities != nil { family_cities = stored.family_cities }
+            if stored.reminders_on != nil { reminders_on = stored.reminders_on }
+            if stored.to_json().search("\"current_weather\"") >= 0 && stored.current_weather != nil { current_weather = stored.current_weather }
+        }
+    }
+    if cities.len() == 0 { cities.push(current_city) }
+    refresh_weather()
+    ui.content.render()
+}
+fn goto(target){ page = target ui.content.render() }
+fn handle_weather_response(response){
+    if response.status_code >= 400 { app_status = "天气服务暂时不可用（" + ("" + response.status_code) + "）" ui.content.render() return }
+    let data = response.body.to_string().parse_json()
+    if data == nil || data.current == nil { app_status = "暂时没有这座城市的天气数据" ui.content.render() return }
+    current_weather = data
+    app_status = ""
+    save_data()
+    ui.content.render()
+}
+fn refresh_weather(){
+    app_status = "正在更新天气…"
+    ui.content.render()
+    let url = "https://api.open-meteo.com/v1/forecast?latitude=" + ("" + current_city.latitude) + "&longitude=" + ("" + current_city.longitude) + "&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,weather_code,wind_speed_10m&hourly=temperature_2m,precipitation_probability,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset&timezone=auto&forecast_days=7"
+    net.http_request(net.HttpRequest{url: url method: net.HttpMethod.GET}) do net.HttpEvents{
+        on_response: |response| handle_weather_response(response)
+        on_error: |_error| { app_status = "天气暂时不可用，请检查网络后重试" ui.content.render() }
+    }
+}
+fn weather_text(code){
+    if code == 0 { return "晴" }
+    if code == 1 || code == 2 { return "多云" }
+    if code == 3 { return "阴" }
+    if code == 45 || code == 48 { return "有雾" }
+    if code == 51 || code == 53 || code == 55 || code == 61 || code == 63 || code == 65 { return "有雨" }
+    if code == 71 || code == 73 || code == 75 || code == 77 { return "有雪" }
+    if code == 80 || code == 81 || code == 82 { return "阵雨" }
+    if code == 95 || code == 96 || code == 99 { return "雷雨" }
+    "天气变化"
+}
+fn location_text(city){
+    let text = city.name
+    if city.admin1 != nil && city.admin1 != "" && city.admin1 != city.name { text = text + " · " + city.admin1 }
+    if city.country != nil && city.country != "" { text = text + " · " + city.country }
+    text
+}
+fn choose_city(city){
+    current_city = city
+    let already_saved = false
+    for i in cities.len() { if cities[i].name == city.name && cities[i].country == city.country { already_saved = true } }
+    if !already_saved { cities.push(city) }
+    page = "today"
+    save_data()
+    refresh_weather()
+}
+fn select_saved_city(index){ choose_city(cities[index]) }
+fn open_city_search(){
+    search_text = ""
+    city_results = []
+    search_status = "输入城市名称搜索"
+    goto("search")
+}
+fn handle_city_search_response(response){
+    if response.status_code >= 400 { city_results = [] search_status = "搜索服务暂时不可用" ui.content.render() return }
+    let data = response.body.to_string().parse_json()
+    if data == nil || data.to_json().search("\"results\"") < 0 { city_results = [] search_status = "没有找到匹配城市，试试常用中文名或英文名" ui.content.render() return }
+    if data.results.len() == 0 { city_results = [] search_status = "没有找到匹配城市，试试更短的名称" ui.content.render() return }
+    city_results = data.results
+    search_status = "找到 " + ("" + city_results.len()) + " 个地点"
+    ui.content.render()
+}
+fn search_cities(){
+    search_text = ui.city_query.text().trim()
+    if search_text == "" { city_results = [] search_status = "请输入城市名称" ui.content.render() return }
+    let local_results = []
+    for place in local_places {
+        if place.name.search(search_text) >= 0 || place.admin1.search(search_text) >= 0 { local_results.push(place) }
+    }
+    if local_results.len() > 0 {
+        city_results = local_results
+        search_status = "找到 " + ("" + city_results.len()) + " 个常用地点"
+        ui.content.render()
+        return
+    }
+    search_status = "正在搜索…"
+    ui.content.render()
+    let url = "https://geocoding-api.open-meteo.com/v1/search?name=" + search_text.url_encode() + "&count=12&language=zh&format=json"
+    net.http_request(net.HttpRequest{url: url method: net.HttpMethod.GET}) do net.HttpEvents{
+        on_response: |response| handle_city_search_response(response)
+        on_error: |_error| { city_results = [] search_status = "搜索失败，请检查网络后重试" ui.content.render() }
+    }
+}
+fn select_search_result(index){ choose_city(city_results[index]) }
+fn has_preference(wanted){
+    let found = false
+    for i in preferences.len() { if preferences[i] == wanted { found = true } }
+    found
+}
+fn toggle_preference(wanted){
+    let kept = []
+    let found = false
+    for i in preferences.len() { if preferences[i] == wanted { found = true } else { kept.push(preferences[i]) } }
+    if !found { kept.push(wanted) }
+    preferences = kept
+    save_data()
+    ui.content.render()
+}
+fn add_custom_tag(){
+    custom_tag = ui.new_tag.text().trim()
+    if custom_tag == "" { return }
+    preferences.push(custom_tag)
+    custom_tag = ""
+    save_data()
+    goto("mine")
+}
+fn add_family_city(){
+    if family_cities.len() == 0 { family_cities.push(current_city) }
+    else {
+        let exists = false
+        for i in family_cities.len() { if family_cities[i].name == current_city.name { exists = true } }
+        if !exists { family_cities.push(current_city) }
+    }
+    save_data()
+    ui.content.render()
+}
+fn toggle_reminders(){ reminders_on = !reminders_on save_data() ui.content.render() }
+fn send_weather_question(){
+    question_text = ui.question.text().trim()
+    if question_text == "" { return }
+    chat_messages.push({speaker: "我", text: question_text})
+    let prompt = "你是天气助手。请只根据以下天气数据回答用户问题；没有数据时说明不知道，不要编造。城市：" + location_text(current_city)
+    if current_weather != nil { prompt = prompt + "；当前温度 " + current_weather.current.temperature_2m + "°C；体感 " + current_weather.current.apparent_temperature + "°C；天气 " + weather_text(current_weather.current.weather_code) + "；今日最高 " + current_weather.daily.temperature_2m_max[0] + "°C，最低 " + current_weather.daily.temperature_2m_min[0] + "°C" }
+    prompt = prompt + "。用户问题：" + question_text
+    question_text = ""
+    app_status = "正在联系 OctoSense 助手…"
+    ui.content.render()
+    host.request("octos.session.open", {}, fn(open_result){
+        if !open_result.is_ok { chat_messages.push({speaker: "天气助手", text: "助手暂不可用，请检查 OctoSense 授权和 AI 设置。"}) app_status = "" ui.content.render() return }
+        host.request("octos.turn.start", {text: prompt}, fn(answer){
+            if answer.is_ok { chat_messages.push({speaker: "天气助手", text: answer.data.text}) }
+            else { chat_messages.push({speaker: "天气助手", text: "问答未完成，请检查 OctoSense 授权和 AI 设置。"}) }
+            app_status = ""
+            ui.content.render()
+        })
+    })
+    ui.content.render()
+}
+
+start_timeout(0.05, || load_data())
+
+let ink = #x17263c
+let muted = #x708096
+let orange = #xff9b45
+let navy = #x12243b
+let pale = #xf2f6fa
+SolidView{width: Fill height: Fill flow: Down padding: 16 spacing: 10 draw_bg.color: pale
+    View{width: Fill height: Fit flow: Right align: Align{y: 0.5} spacing: 8
+        Label{text: "天气助手" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 24}}
+        View{width: Fill height: 1}
+        ButtonFlat{text: "刷新" height: 38 on_click: || refresh_weather()
+            draw_bg +: {border_radius: 18.0 color: #xe5edf6 color_hover: #xd8e6f3 color_down: #xcbddec border_size: 0.0}
+            draw_text +: {color: ink color_hover: ink color_down: ink}}
+    }
+    content := ScrollYView{width: Fill height: Fill flow: Down spacing: 12 on_render: || {
+        if page == "today" {
+            RoundedView{width: Fill height: Fit padding: 20 flow: Down spacing: 10 show_bg: true draw_bg.color: navy draw_bg.border_radius: 24.0
+                ButtonFlatter{text: current_city.name + " · " + current_city.country + "   ›   切换城市" height: 36 align: Align{x: 0.0 y: 0.5} on_click: || goto("cities")
+                    draw_text.color: #xffd7a4 draw_text.text_style: theme.font_bold{font_size: 17}}
+                if current_weather == nil {
+                    Label{text: "天气数据暂不可用" draw_text.color: #xffffff draw_text.text_style: theme.font_bold{font_size: 24}}
+                } else {
+                    Label{text: "" + round(current_weather.current.temperature_2m) + "°" draw_text.color: #xffffff draw_text.text_style: theme.font_bold{font_size: 62}}
+                    Label{text: weather_text(current_weather.current.weather_code) + "   体感 " + round(current_weather.current.apparent_temperature) + "°C" draw_text.color: #xd9e3ef draw_text.text_style.font_size: 17}
+                    Label{text: "今日  " + round(current_weather.daily.temperature_2m_min[0]) + "°  —  " + round(current_weather.daily.temperature_2m_max[0]) + "°" draw_text.color: #xd9e3ef draw_text.text_style.font_size: 16}
+                }
+                Label{text: app_status draw_text.color: #xffd0ab draw_text.text_style.font_size: 13}
+            }
+            RoundedView{width: Fill height: Fit padding: 16 flow: Down spacing: 8 show_bg: true draw_bg.color: #xffffff draw_bg.border_radius: 18.0
+                Label{text: "今日出门建议" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 18}}
+                if current_weather == nil { Label{text: "正在读取天气，稍后会给出穿衣与出行建议。" draw_text.color: muted} }
+                else {
+                    Label{text: weather_text(current_weather.current.weather_code) + " · 当前 " + round(current_weather.current.temperature_2m) + "°C" draw_text.color: ink}
+                    Label{text: "早晚温差大，出门前查看逐小时预报。" draw_text.color: muted}
+                }
+                View{width: Fill height: Fit flow: Right spacing: 8
+                    ButtonFlat{text: "问问天气助手" height: 36 on_click: || goto("qa") draw_bg +: {border_radius: 18.0 color: #xffeedc color_hover: #xffdfb5 color_down: #xffd28d border_size: 0.0} draw_text.color: ink}
+                    ButtonFlat{text: "家庭提醒" height: 36 on_click: || goto("mine") draw_bg +: {border_radius: 18.0 color: #xedf3fa color_hover: #xdce8f5 color_down: #xcbddec border_size: 0.0} draw_text.color: ink}
+                }
+            }
+            RoundedView{width: Fill height: Fit padding: 16 flow: Down spacing: 8 show_bg: true draw_bg.color: #xffffff draw_bg.border_radius: 18.0
+                Label{text: "常用场景" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 18}}
+                View{width: Fill height: Fit flow: Right spacing: 8
+                    ButtonFlat{text: "晾衣服" height: 36 on_click: || goto("sky") draw_bg +: {border_radius: 18.0 color: #xffdfb3 color_hover: #xffd29a color_down: #xffc681 border_size: 0.0} draw_text.color: ink}
+                    ButtonFlat{text: "去跑步" height: 36 on_click: || goto("sky") draw_bg +: {border_radius: 18.0 color: #xe9eff6 color_hover: #xdce6f1 color_down: #xcfdeec border_size: 0.0} draw_text.color: ink}
+                    ButtonFlat{text: "洗车" height: 36 on_click: || goto("sky") draw_bg +: {border_radius: 18.0 color: #xe9eff6 color_hover: #xdce6f1 color_down: #xcfdeec border_size: 0.0} draw_text.color: ink}
+                }
+            }
+            RoundedView{width: Fill height: Fit padding: 16 flow: Down spacing: 8 show_bg: true draw_bg.color: #xedf3f9 draw_bg.border_radius: 18.0
+                Label{text: "家人关注" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 17}}
+                if family_cities.len() == 0 { Label{text: "还没有关注家人城市" draw_text.color: muted} }
+                for i in family_cities.len() { Label{text: location_text(family_cities[i]) draw_text.color: ink} }
+                ButtonFlatter{text: "管理家人城市 ›" height: 32 align: Align{x: 0.0 y: 0.5} on_click: || goto("mine") draw_text.color: #xc16e24}
+            }
+        }
+        if page == "sky" {
+            Label{text: "天空 · " + current_city.name draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 23}}
+            if current_weather == nil { Label{text: app_status + "  点右上角刷新" draw_text.color: muted} }
+            else {
+                RoundedView{width: Fill height: Fit padding: 16 flow: Down spacing: 10 show_bg: true draw_bg.color: #xffffff draw_bg.border_radius: 18.0
+                    Label{text: "逐小时" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 18}}
+                    for i in 8 {
+                        Label{text: current_weather.hourly.time[i] + "   " + weather_text(current_weather.hourly.weather_code[i]) + "   " + current_weather.hourly.temperature_2m[i] + "°C   降水 " + current_weather.hourly.precipitation_probability[i] + "%" draw_text.color: ink}
+                    }
+                }
+                RoundedView{width: Fill height: Fit padding: 16 flow: Down spacing: 10 show_bg: true draw_bg.color: #xffffff draw_bg.border_radius: 18.0
+                    Label{text: "未来 7 天" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 18}}
+                    for i in 7 {
+                        Label{text: current_weather.daily.time[i] + "   " + weather_text(current_weather.daily.weather_code[i]) + "   " + current_weather.daily.temperature_2m_min[i] + "° / " + current_weather.daily.temperature_2m_max[i] + "°C" draw_text.color: ink}
+                    }
+                }
+            }
+        }
+        if page == "qa" {
+            Label{text: "天气问答" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 24}}
+            Label{text: "使用 OctoSense 助手回答天气问题。" draw_text.color: muted}
+            Label{text: "首次使用需要在宿主授权。" draw_text.color: muted}
+            RoundedView{width: Fill height: Fit padding: 14 flow: Down spacing: 8 show_bg: true draw_bg.color: #xffffff draw_bg.border_radius: 18.0
+                Label{text: "当前上下文：" + location_text(current_city) draw_text.color: #xc16e24}
+                if chat_messages.len() == 0 { Label{text: "可以问：今天适合跑步吗？要带伞吗？" draw_text.color: muted} }
+                for i in chat_messages.len() {
+                    Label{text: chat_messages[i].speaker + "：" + chat_messages[i].text draw_text.color: ink}
+                    Hr{}
+                }
+                Label{text: app_status draw_text.color: #xa35d20}
+            }
+            View{width: Fill height: Fit flow: Right spacing: 8 align: Align{y: 0.5}
+                question := TextInput{width: Fill height: 42 empty_text: "输入你的天气问题" on_return: |text| send_weather_question()
+                    draw_bg +: {color: #xffffff color_hover: #xffffff color_focus: #xffffff color_empty: #xffffff border_radius: 10.0}
+                    draw_text +: {color: ink color_hover: ink color_focus: ink color_empty: muted color_empty_hover: muted}}
+                ButtonFlat{text: "发送" height: 42 on_click: || send_weather_question() draw_bg +: {border_radius: 18.0 color: #xed9b4d color_hover: #xf5a75f color_down: #xdd873b border_size: 0.0} draw_text.color: #xffffff}
+            }
+        }
+        if page == "cities" {
+            View{width: Fill height: Fit flow: Right spacing: 8 align: Align{y: 0.5}
+                ButtonFlatter{text: "‹ 返回" height: 36 on_click: || goto("today") draw_text.color: #xc16e24}
+                Label{text: "城市管理" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 24}}
+            }
+            ButtonFlat{text: "搜索城市或景区" height: 44 on_click: || open_city_search()
+                draw_bg +: {border_radius: 22.0 color: #xffffff color_hover: #xf4f7fa color_down: #xe8eef4 border_size: 0.0} draw_text.color: muted}
+            for i in cities.len() {
+                RoundedView{width: Fill height: Fit padding: 16 flow: Right align: Align{y: 0.5} show_bg: true draw_bg.color: navy draw_bg.border_radius: 20.0
+                    GestureView{width: Fill height: Fit on_tap: |x, y| select_saved_city(i)
+                        View{width: Fill height: Fit flow: Down spacing: 4
+                            Label{text: cities[i].name + if cities[i].name == current_city.name {"  · 当前"} else {""} draw_text.color: #xffffff draw_text.text_style: theme.font_bold{font_size: 20}}
+                            Label{text: location_text(cities[i]) draw_text.color: #xd2dce8 draw_text.text_style.font_size: 13}
+                        }
+                    }
+                    ButtonFlatter{text: "查看" height: 34 on_click: || select_saved_city(i) draw_text.color: #xffd39f}
+                }
+            }
+        }
+        if page == "search" {
+            View{width: Fill height: Fit flow: Right spacing: 8 align: Align{y: 0.5}
+                ButtonFlatter{text: "‹" height: 38 on_click: || goto("cities") draw_text.color: ink}
+                city_query := TextInput{width: 280 height: 42 text: search_text empty_text: "城市名称" on_change: |text| {search_text = text} on_return: |text| search_cities()
+                    draw_bg +: {color: #xffffff color_hover: #xffffff color_focus: #xffffff color_empty: #xffffff border_radius: 20.0}
+                    draw_text +: {color: ink color_hover: ink color_focus: ink color_empty: muted}}
+                ButtonFlatter{text: "搜索" height: 38 on_click: || search_cities() draw_text.color: #x2789d8}
+            }
+            Label{text: "热门城市" draw_text.color: muted draw_text.text_style: theme.font_bold{font_size: 16}}
+            View{width: Fill height: Fit flow: Right spacing: 8
+                ButtonFlat{text: "北京" height: 38 draw_bg +: {border_radius: 18.0 color: #xe9eff6 color_hover: #xdce6f1 color_down: #xcfdeec border_size: 0.0} draw_text.color: ink on_click: || choose_city({name: "北京", admin1: "北京市", country: "中国", latitude: 39.9042, longitude: 116.4074})}
+                ButtonFlat{text: "上海" height: 38 draw_bg +: {border_radius: 18.0 color: #xe9eff6 color_hover: #xdce6f1 color_down: #xcfdeec border_size: 0.0} draw_text.color: ink on_click: || choose_city({name: "上海", admin1: "上海市", country: "中国", latitude: 31.2304, longitude: 121.4737})}
+                ButtonFlat{text: "广州" height: 38 draw_bg +: {border_radius: 18.0 color: #xe9eff6 color_hover: #xdce6f1 color_down: #xcfdeec border_size: 0.0} draw_text.color: ink on_click: || choose_city({name: "广州", admin1: "广东省", country: "中国", latitude: 23.1291, longitude: 113.2644})}
+            }
+            View{width: Fill height: Fit flow: Right spacing: 8
+                ButtonFlat{text: "深圳" height: 38 draw_bg +: {border_radius: 18.0 color: #xe9eff6 color_hover: #xdce6f1 color_down: #xcfdeec border_size: 0.0} draw_text.color: ink on_click: || choose_city({name: "深圳", admin1: "广东省", country: "中国", latitude: 22.5431, longitude: 114.0579})}
+                ButtonFlat{text: "天津" height: 38 draw_bg +: {border_radius: 18.0 color: #xe9eff6 color_hover: #xdce6f1 color_down: #xcfdeec border_size: 0.0} draw_text.color: ink on_click: || choose_city({name: "天津", admin1: "天津市", country: "中国", latitude: 39.0842, longitude: 117.2010})}
+                ButtonFlat{text: "成都" height: 38 draw_bg +: {border_radius: 18.0 color: #xe9eff6 color_hover: #xdce6f1 color_down: #xcfdeec border_size: 0.0} draw_text.color: ink on_click: || choose_city({name: "成都", admin1: "四川省", country: "中国", latitude: 30.5728, longitude: 104.0668})}
+            }
+            Label{text: "国际城市" draw_text.color: muted draw_text.text_style: theme.font_bold{font_size: 16}}
+            View{width: Fill height: Fit flow: Right spacing: 8
+                ButtonFlat{text: "东京" height: 38 draw_bg +: {border_radius: 18.0 color: #xe9eff6 color_hover: #xdce6f1 color_down: #xcfdeec border_size: 0.0} draw_text.color: ink on_click: || choose_city({name: "东京", admin1: "东京都", country: "日本", latitude: 35.6762, longitude: 139.6503})}
+                ButtonFlat{text: "伦敦" height: 38 draw_bg +: {border_radius: 18.0 color: #xe9eff6 color_hover: #xdce6f1 color_down: #xcfdeec border_size: 0.0} draw_text.color: ink on_click: || choose_city({name: "伦敦", admin1: "英格兰", country: "英国", latitude: 51.5072, longitude: -0.1276})}
+                ButtonFlat{text: "纽约" height: 38 draw_bg +: {border_radius: 18.0 color: #xe9eff6 color_hover: #xdce6f1 color_down: #xcfdeec border_size: 0.0} draw_text.color: ink on_click: || choose_city({name: "纽约", admin1: "纽约州", country: "美国", latitude: 40.7128, longitude: -74.0060})}
+            }
+            Label{text: search_status draw_text.color: muted}
+            for i in city_results.len() {
+                GestureView{width: Fill height: Fit padding: 12 on_tap: |x, y| select_search_result(i)
+                    View{width: Fill height: Fit flow: Down spacing: 4
+                        Label{text: city_results[i].name + " · " + city_results[i].admin1 + " · " + city_results[i].country draw_text.color: ink draw_text.text_style.font_size: 17}
+                        Label{text: "点击添加并查看天气" draw_text.color: muted draw_text.text_style.font_size: 12}
+                    }
+                }
+                Hr{}
+            }
+        }
+        if page == "mine" {
+            Label{text: "我的" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 24}}
+            RoundedView{width: Fill height: Fit padding: 16 flow: Down spacing: 10 show_bg: true draw_bg.color: #xffffff draw_bg.border_radius: 18.0
+                Label{text: "天气偏好" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 18}}
+                Label{text: "点选你的体感和关注项，用于个性化建议" draw_text.color: muted}
+                View{width: Fill height: Fit flow: Right spacing: 8
+                    ButtonFlat{text: if has_preference("怕冷") {"✓ 怕冷"} else {"怕冷"} height: 36 on_click: || toggle_preference("怕冷") draw_bg +: {border_radius: 18.0 color: #xffdfb3 color_hover: #xffd29a color_down: #xffc681 border_size: 0.0} draw_text.color: ink}
+                    ButtonFlat{text: if has_preference("怕热") {"✓ 怕热"} else {"怕热"} height: 36 on_click: || toggle_preference("怕热") draw_bg +: {border_radius: 18.0 color: #xffdfb3 color_hover: #xffd29a color_down: #xffc681 border_size: 0.0} draw_text.color: ink}
+                    ButtonFlat{text: if has_preference("关注紫外线") {"✓ 关注紫外线"} else {"关注紫外线"} height: 36 on_click: || toggle_preference("关注紫外线") draw_bg +: {border_radius: 18.0 color: #xffdfb3 color_hover: #xffd29a color_down: #xffc681 border_size: 0.0} draw_text.color: ink}
+                }
+                View{width: Fill height: Fit flow: Right spacing: 8
+                    ButtonFlat{text: if has_preference("关注降雨") {"✓ 关注降雨"} else {"关注降雨"} height: 36 on_click: || toggle_preference("关注降雨") draw_bg +: {border_radius: 18.0 color: #xffdfb3 color_hover: #xffd29a color_down: #xffc681 border_size: 0.0} draw_text.color: ink}
+                    ButtonFlat{text: "+" height: 36 on_click: || goto("tag-add") draw_bg +: {border_radius: 18.0 color: #xeaf1f8 color_hover: #xdce8f4 color_down: #xcbddec border_size: 0.0} draw_text.color: #x2789d8}
+                }
+                if preferences.len() > 4 {
+                    Label{text: "自定义关注" draw_text.color: muted draw_text.text_style.font_size: 13}
+                    ScrollXView{width: Fill height: 38 flow: Right spacing: 8
+                        for i in preferences.len() {
+                            if i >= 4 {
+                                ButtonFlat{text: "✓ " + preferences[i] height: 34 on_click: || toggle_preference(preferences[i]) draw_bg +: {border_radius: 17.0 color: #xe9eff6 color_hover: #xdce6f1 color_down: #xcfdeec border_size: 0.0} draw_text.color: ink}
+                            }
+                        }
+                    }
+                }
+            }
+            RoundedView{width: Fill height: Fit padding: 16 flow: Down spacing: 8 show_bg: true draw_bg.color: #xffffff draw_bg.border_radius: 18.0
+                Label{text: "家庭城市" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 18}}
+                Label{text: "关注城市与提醒偏好保存在本机" draw_text.color: muted}
+                for i in family_cities.len() { Label{text: location_text(family_cities[i]) draw_text.color: ink} }
+                ButtonFlat{text: "+ 添加当前城市为家人关注城市" height: 38 on_click: || add_family_city() draw_bg +: {border_radius: 18.0 color: #xeaf1f8 color_hover: #xdce8f4 color_down: #xcbddec border_size: 0.0} draw_text.color: ink}
+                ButtonFlat{text: if reminders_on {"✓ 天气变化提醒已开启（本机设置）"} else {"开启本机天气提醒"} height: 38 on_click: || toggle_reminders() draw_bg +: {border_radius: 18.0 color: #xffeedc color_hover: #xffdfb5 color_down: #xffd28d border_size: 0.0} draw_text.color: ink}
+            }
+        }
+        if page == "tag-add" {
+            ButtonFlatter{text: "‹ 返回偏好" height: 36 on_click: || goto("mine") draw_text.color: #xc16e24}
+            Label{text: "添加自定义标签" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 24}}
+            Label{text: "输入你想关注的天气事项" draw_text.color: muted}
+            new_tag := TextInput{width: Fill height: 44 empty_text: "例如：花粉、晾晒、骑行" draw_bg +: {color: #xffffff color_hover: #xffffff color_focus: #xffffff color_empty: #xffffff border_radius: 10.0} draw_text +: {color: ink color_empty: muted color_empty_hover: muted}}
+            ButtonFlat{text: "保存标签" height: 42 on_click: || add_custom_tag() draw_bg +: {border_radius: 20.0 color: #xed9b4d color_hover: #xf5a75f color_down: #xdd873b border_size: 0.0} draw_text.color: #xffffff}
+        }
+    }}
+    View{width: Fill height: Fit flow: Right spacing: 4
+        ButtonFlat{text: "☀ 今天" width: Fill height: 44 on_click: || goto("today") draw_text.color: #xc16e24}
+        ButtonFlat{text: "☁ 天空" width: Fill height: 44 on_click: || goto("sky") draw_text.color: muted}
+        ButtonFlat{text: "◉ 问答" width: Fill height: 44 on_click: || goto("qa") draw_text.color: muted}
+        ButtonFlat{text: "♡ 我的" width: Fill height: 44 on_click: || goto("mine") draw_text.color: muted}
+    }
+}
