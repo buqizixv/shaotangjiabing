@@ -34,6 +34,8 @@ let preferences = ["怕冷", "怕热", "关注紫外线", "关注降雨"]
 let custom_tag = ""
 let family_cities = []
 let wardrobe = []
+let wardrobe_locations = []
+let wardrobe_photos = []
 let schedule = []
 let reminders_on = true
 let current_weather = nil
@@ -48,12 +50,18 @@ let schedule_start = ""
 let schedule_end = ""
 let pending_event = nil
 let create_schedule_mode = false
+let new_clothing_location = ""
+let clothing_photo = ""
+let clothing_photo_view_path = ""
+let clothing_photo_status = ""
+let clothing_photo_busy = false
+let clothing_camera_status = ""
 let advice_text = "天气加载后，Daycast 会结合你的衣橱和日程给出建议。"
 let advice_generation = 0
 let qa_generation = 0
 
 fn save_data(){
-    fs.write("weather.json", {current_city: current_city, cities: cities, preferences: preferences, family_cities: family_cities, wardrobe: wardrobe, schedule: schedule, reminders_on: reminders_on, current_weather: current_weather}.to_json())
+    fs.write("weather.json", {current_city: current_city, cities: cities, preferences: preferences, family_cities: family_cities, wardrobe: wardrobe, wardrobe_locations: wardrobe_locations, wardrobe_photos: wardrobe_photos, schedule: schedule, reminders_on: reminders_on, current_weather: current_weather}.to_json())
 }
 fn load_data(){
     if fs.exists("weather.json") {
@@ -64,6 +72,10 @@ fn load_data(){
             if stored.preferences != nil { preferences = stored.preferences }
             if stored.family_cities != nil { family_cities = stored.family_cities }
             if stored.wardrobe != nil { wardrobe = stored.wardrobe }
+            if stored.wardrobe_locations != nil && stored.wardrobe_locations.len() == wardrobe.len() { wardrobe_locations = stored.wardrobe_locations }
+            else { wardrobe_locations = []; for i in wardrobe.len() { wardrobe_locations.push("") } }
+            if stored.wardrobe_photos != nil && stored.wardrobe_photos.len() == wardrobe.len() { wardrobe_photos = stored.wardrobe_photos }
+            else { wardrobe_photos = []; for i in wardrobe.len() { wardrobe_photos.push("") } }
             if stored.schedule != nil { schedule = stored.schedule }
             if stored.reminders_on != nil { reminders_on = stored.reminders_on }
             if stored.to_json().search("\"current_weather\"") >= 0 && stored.current_weather != nil { current_weather = stored.current_weather }
@@ -197,6 +209,17 @@ fn schedule_context(){
     for event in schedule { rows.push({title: event.title start: event.start end: event.end}) }
     rows
 }
+fn wardrobe_context(){
+    let rows = []
+    for i in wardrobe.len() {
+        let location = ""
+        let photo_attached = false
+        if i < wardrobe_locations.len() { location = wardrobe_locations[i] }
+        if i < wardrobe_photos.len() { photo_attached = wardrobe_photos[i] != "" }
+        rows.push({type: wardrobe[i], location: location, photo_attached: photo_attached})
+    }
+    rows
+}
 fn hourly_context(){
     let rows = []
     if current_weather != nil && current_weather.hourly != nil {
@@ -244,7 +267,7 @@ fn request_outing_advice(){
         let context = {city: location_text(current_city), weather_date: current_weather.daily.time[0],
             current: current_weather.current, hourly_forecast: hourly_context(),
             daily_forecast: daily_context(), preferences: preferences,
-            wardrobe: wardrobe, schedule: schedule_context()}
+            wardrobe: wardrobe_context(), schedule: schedule_context()}
         let prompt = "请根据以下 Daycast 天气、衣橱、偏好与日程数据，给出一段中文今日出门建议。推荐衣物必须来自衣橱；安排出行时避开日程冲突；只引用提供的天气数据，不编造。简短说明穿什么、适合何时出门。数据：" + context.to_json()
         host.request("octos.session.open", {}, fn(open_result){
             if ticket != advice_generation { return }
@@ -258,21 +281,104 @@ fn request_outing_advice(){
         })
     })
 }
+fn show_clothing_photo(){
+    if clothing_photo == "" { ui.clothing_photo_preview.set_visible(false); return }
+    let bytes = []
+    if clothing_photo.split(".json").len() > 1 { bytes = fs.read(clothing_photo).parse_json() }
+    else { bytes = fs.read_bytes(clothing_photo) }
+    if bytes != nil { ui.clothing_photo_preview.load_image_from_data_async(bytes); ui.clothing_photo_preview.set_visible(true) }
+}
+fn open_saved_clothing_photo(index){
+    if index >= wardrobe_photos.len() || wardrobe_photos[index] == "" { return }
+    clothing_photo_view_path = wardrobe_photos[index]
+    page = "wardrobe-photo"
+    ui.content.render()
+    start_timeout(0.05, || {
+        let bytes = []
+        if clothing_photo_view_path.split(".json").len() > 1 { bytes = fs.read(clothing_photo_view_path).parse_json() }
+        else { bytes = fs.read_bytes(clothing_photo_view_path) }
+        if bytes != nil { ui.saved_clothing_photo.load_image_from_data_async(bytes) }
+    })
+}
+fn pick_clothing_photo(){
+    if clothing_photo_busy { return }
+    clothing_photo_busy = true
+    clothing_photo_status = "正在打开照片选择器…"
+    ui.clothing_photo_status.set_text(clothing_photo_status)
+    host.request("photo.pick", {}, fn(result){
+        if result.is_ok && result.data != nil && result.data.bytes != nil {
+            fs.mkdir("wardrobe_photos")
+            fs.write("wardrobe_photos/draft.json", result.data.bytes.to_json())
+            clothing_photo = "wardrobe_photos/draft.json"
+            clothing_photo_busy = false
+            clothing_photo_status = "已选好照片（保存衣物时一起保存）"
+            ui.content.render()
+            start_timeout(0.05, || show_clothing_photo())
+        } else {
+            clothing_photo_busy = false
+            clothing_photo_status = if result.is_ok {"没有收到照片"} else {result.error}
+            ui.clothing_photo_status.set_text(clothing_photo_status)
+        }
+    })
+}
+fn open_clothing_camera(){
+    clothing_camera_status = ""
+    page = "wardrobe-camera"
+    ui.content.render()
+    start_timeout(0.15, || ui.clothing_camera.start())
+}
+fn captured_clothing_photo(){
+    let path = ui.clothing_camera.last()
+    if path == "" { clothing_camera_status = "拍摄没有成功，请重试。"; ui.content.render(); return }
+    clothing_photo = path
+    clothing_photo_status = "已拍好照片（保存衣物时一起保存）"
+    ui.clothing_camera.stop()
+    page = "wardrobe"
+    ui.content.render()
+    start_timeout(0.05, || show_clothing_photo())
+}
+fn close_clothing_camera(){ ui.clothing_camera.stop(); page = "wardrobe"; ui.content.render() }
+fn save_clothing_photo_copy(){
+    if clothing_photo != "wardrobe_photos/draft.json" { return }
+    let copy_path = "wardrobe_photos/" + ("" + floor(time_now() * 1000)) + ".json"
+    fs.write(copy_path, fs.read(clothing_photo))
+    clothing_photo = copy_path
+    fs.remove("wardrobe_photos/draft.json")
+}
 fn add_clothing(){
     let item = ui.clothing_input.text().trim()
     if item == "" { return }
+    new_clothing_location = ui.clothing_location.text().trim()
     let exists = false
-    for i in wardrobe.len() { if wardrobe[i] == item { exists = true } }
-    if !exists { wardrobe.push(item) }
+    for i in wardrobe.len() { if wardrobe[i] == item { exists = true; if new_clothing_location != "" && i < wardrobe_locations.len() { wardrobe_locations[i] = new_clothing_location } } }
+    save_clothing_photo_copy()
+    if !exists { wardrobe.push(item); wardrobe_locations.push(new_clothing_location); wardrobe_photos.push(clothing_photo) }
+    else { for i in wardrobe.len() { if wardrobe[i] == item && clothing_photo != "" && i < wardrobe_photos.len() {
+        if wardrobe_photos[i] != "" && wardrobe_photos[i] != clothing_photo && fs.exists(wardrobe_photos[i]) { fs.remove(wardrobe_photos[i]) }
+        wardrobe_photos[i] = clothing_photo
+    } } }
+    new_clothing_location = ""
+    clothing_photo = ""
+    clothing_photo_status = ""
     ui.clothing_input.set_text("")
+    ui.clothing_location.set_text("")
+    ui.clothing_photo_preview.set_visible(false)
+    ui.clothing_photo_status.set_text("")
     save_data()
     request_outing_advice()
     ui.content.render()
 }
 fn remove_clothing(index){
+    if index < wardrobe_photos.len() && wardrobe_photos[index] != "" && fs.exists(wardrobe_photos[index]) { fs.remove(wardrobe_photos[index]) }
     let kept = []
     for i in wardrobe.len() { if i != index { kept.push(wardrobe[i]) } }
     wardrobe = kept
+    let kept_locations = []
+    for i in wardrobe_locations.len() { if i != index { kept_locations.push(wardrobe_locations[i]) } }
+    wardrobe_locations = kept_locations
+    let kept_photos = []
+    for i in wardrobe_photos.len() { if i != index { kept_photos.push(wardrobe_photos[i]) } }
+    wardrobe_photos = kept_photos
     save_data()
     request_outing_advice()
     ui.content.render()
@@ -401,7 +507,7 @@ fn send_weather_question(){
         city: location_text(current_city), weather_date: if current_weather == nil {""} else {current_weather.daily.time[0]},
         current: if current_weather == nil {nil} else {current_weather.current},
         hourly_forecast: hourly_context(), daily_forecast: daily_context(),
-        preferences: preferences, wardrobe: wardrobe, existing_schedule: schedule_context()}
+        preferences: preferences, wardrobe: wardrobe_context(), existing_schedule: schedule_context()}
     let mode_instruction = "普通问答模式：回答天气、衣物或活动建议。只引用上下文里提供的天气事实，不编造。若讨论活动时间，查阅日程并推荐不冲突的时段；仅当用户明确想安排活动且日期、起止时间足够明确时，才在回答末尾附上一个待确认的日程草案。单纯说提醒或闹铃时不要创建日程，提示用户可开启创建日程按钮。"
     if schedule_intent { mode_instruction = "创建日程模式：用户这条消息要添加到 Daycast 日程表，不要建议设置闹铃。结合天气和现有日程提取活动、日期及起止时间；缺少关键信息时只追问，并且不要生成草案。信息明确且无冲突时，在回答末尾附上待确认草案。" }
     let prompt = "你是 Daycast 天气与日程顾问。今天日期见 weather_date；明天等相对日期必须换算成明确日期。天气只使用提供的数据。衣物推荐只能来自用户衣橱。" + mode_instruction + "\n如果要提出日程草案，必须在答案最后单独附加一行 [DAYCAST_EVENT] 后接 JSON 对象，再接 [/DAYCAST_EVENT]。对象格式严格为 {\"title\":\"活动\",\"start\":\"YYYY-MM-DDTHH:mm\",\"end\":\"YYYY-MM-DDTHH:mm\",\"reason\":\"推荐理由\"}；24 小时制，不能有秒、空格或时区。除这行外正常用中文回答。未点击‘确认并添加’之前，绝不能声称已经写入日程。上下文：" + context.to_json()
@@ -638,19 +744,45 @@ SolidView{width: Fill height: Fill flow: Down padding: 16 spacing: 10 draw_bg.co
                 Label{text: "衣橱" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 24}}
             }
             Label{text: "添加你已有的衣物类型，例如：羽绒服、雨衣、运动鞋。" draw_text.color: muted}
-            View{width: Fill height: Fit flow: Right spacing: 8
-                clothing_input := TextInput{width: Fill height: 42 empty_text: "衣物类型" on_return: |text| add_clothing()
+            clothing_input := TextInput{width: Fill height: 42 empty_text: "衣物类型" on_return: |text| add_clothing()
                     draw_bg +: {color: #xffffff color_hover: #xffffff color_focus: #xffffff color_empty: #xffffff border_radius: 10.0}
                     draw_text +: {color: ink color_empty: muted color_empty_hover: muted}}
+            clothing_location := TextInput{width: Fill height: 42 empty_text: "存放位置（选填，例如：卧室衣柜）" on_change: |text| {new_clothing_location = text}
+                draw_bg +: {color: #xffffff color_hover: #xffffff color_focus: #xffffff color_empty: #xffffff border_radius: 10.0}
+                draw_text +: {color: ink color_empty: muted color_empty_hover: muted}}
+            View{width: Fill height: Fit flow: Right spacing: 8
+                ButtonFlat{text: "从相册/文件选择照片" height: 40 on_click: || pick_clothing_photo() draw_bg +: {border_radius: 18.0 color: #xeaf1f8 color_hover: #xdce8f4 color_down: #xcbddec border_size: 0.0} draw_text.color: ink}
+                ButtonFlat{text: "拍摄照片" height: 40 on_click: || open_clothing_camera() draw_bg +: {border_radius: 18.0 color: #xffeedc color_hover: #xffdfb5 color_down: #xffd28d border_size: 0.0} draw_text.color: ink}
+            }
+            clothing_photo_status := Label{width: Fill text: clothing_photo_status draw_text.color: muted draw_text.text_style.font_size: 13}
+            clothing_photo_preview := Image{visible: false width: 120 height: 140 fit: ImageFit.CropToFill}
+            View{width: Fill height: Fit flow: Right spacing: 8
                 ButtonFlat{text: "添加" height: 42 on_click: || add_clothing() draw_bg +: {border_radius: 18.0 color: #xed9b4d color_hover: #xf5a75f color_down: #xdd873b border_size: 0.0} draw_text.color: #xffffff}
             }
             if wardrobe.len() == 0 { Label{text: "衣橱还是空的" draw_text.color: muted} }
             for i in wardrobe.len() {
                 RoundedView{width: Fill height: Fit padding: 12 flow: Right align: Align{y: 0.5} show_bg: true draw_bg.color: #xffffff draw_bg.border_radius: 14.0
-                    Label{width: Fill text: wardrobe[i] draw_text.color: ink}
+                    View{width: Fill flow: Down spacing: 3
+                        Label{width: Fill text: wardrobe[i] draw_text.color: ink}
+                        if i < wardrobe_locations.len() && wardrobe_locations[i] != "" { Label{width: Fill text: "存放位置：" + wardrobe_locations[i] draw_text.color: muted draw_text.text_style.font_size: 13} }
+                        if i < wardrobe_photos.len() && wardrobe_photos[i] != "" { ButtonFlatter{text: "查看衣物照片" height: 30 on_click: || open_saved_clothing_photo(i) draw_text.color: #xc16e24} }
+                    }
                     ButtonFlatter{text: "移除" height: 32 on_click: || remove_clothing(i) draw_text.color: #xc16e24}
                 }
             }
+        }
+        if page == "wardrobe-camera" {
+            ButtonFlatter{text: "‹ 返回衣橱" height: 36 on_click: || close_clothing_camera() draw_text.color: #xc16e24}
+            Label{text: "拍摄衣物照片" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 22}}
+            Label{text: "拍好的照片会和这件衣物一起保存在本机。" draw_text.color: muted}
+            clothing_camera := CameraPreview{width: Fill height: 320 facing: "back" on_capture: || captured_clothing_photo() on_error: || {clothing_camera_status = ui.clothing_camera.error(); ui.content.render()}}
+            Label{text: clothing_camera_status draw_text.color: #xa35d20}
+            ButtonFlat{text: "拍照" height: 44 on_click: || ui.clothing_camera.capture() draw_bg +: {border_radius: 20.0 color: #xed9b4d color_hover: #xf5a75f color_down: #xdd873b border_size: 0.0} draw_text.color: #xffffff}
+        }
+        if page == "wardrobe-photo" {
+            ButtonFlatter{text: "‹ 返回衣橱" height: 36 on_click: || goto("wardrobe") draw_text.color: #xc16e24}
+            Label{text: "衣物照片" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 22}}
+            saved_clothing_photo := Image{width: Fill height: 420 fit: ImageFit.Smallest}
         }
         if page == "schedule" {
             View{width: Fill height: Fit flow: Right spacing: 8 align: Align{y: 0.5}

@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "subtitle": "天气、衣橱、日程与出行建议",
-  "description": "查看当前天气和逐小时、七天预报，管理衣橱与本机日程，并获得结合天气和已有安排的出行建议。天气问答支持创建日程模式；助手先提出格式化草案，用户确认后才保存。家庭关注与提醒偏好保存在本机。",
+  "description": "查看天气，管理衣橱和日程，并获得结合衣物与安排的出行建议。衣橱可记录衣物类型、家中存放位置，并选取或拍摄衣物照片；照片和衣橱数据保存在本机。问答支持创建日程模式，AI 行程经你确认后才会保存。",
   "category": "weather",
   "keywords": ["天气", "城市", "预报", "衣橱", "日程", "出行", "Daycast"],
   "screenshots": [
@@ -17,7 +17,7 @@
     "support": "https://github.com/buqizixv/shaotangjiabing/issues",
     "privacy_policy_url": "https://github.com/buqizixv/shaotangjiabing/blob/main/octoscript-weather-assistant/PRIVACY.md"
   },
-  "release_notes": "0.2.0：加入衣橱和日程表；首页建议与问答参考个人衣物及安排；AI 行程需确认后才保存。",
+  "release_notes": "0.3.0：衣橱可选记录存放位置，并从相册/文件选择或拍摄照片；照片保存在本机私有空间。",
   "age_rating": "all",
   "license": "Apache-2.0"
 }

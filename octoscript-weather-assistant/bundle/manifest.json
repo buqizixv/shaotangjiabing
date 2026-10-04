@@ -3,11 +3,13 @@
     "storage",
     "net",
     "octos.session.open",
-    "octos.turn.start"
+    "octos.turn.start",
+    "camera",
+    "photo.pick"
   ],
   "id": "weather-assistant",
   "integrity": {
-    "bundle_blake3": "2421b413c8e3ec609ba2f672ad755860f8721e4aea14a24b4e36ac18d9653547"
+    "bundle_blake3": "8c215aed985f5344f0d45b9c0f4f16d883f1d26839a52200c2a97d4281da7ce6"
   },
   "name": "Daycast",
   "network": {
@@ -18,7 +20,7 @@
   },
   "schema": 1,
   "storage": {
-    "max_bytes": 1048576
+    "max_bytes": 16777216
   },
-  "version": "0.2.0"
+  "version": "0.3.0"
 }
