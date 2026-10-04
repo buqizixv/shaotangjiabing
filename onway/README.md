@@ -1,43 +1,12 @@
-# 在途 Onway · 原型对齐版 0.4.2
+# 在途 Onway · MiniMax 接入版 0.5.4
 
-此版本把 `prototypes/01-*.html` 至 `17-*.html` 转换为可点击的原生 OctoSense 卡片。欢迎页、设置、方案、通勤阶段、异常和历史均已核验。背景、文字、滚动区和按钮是原生组件，图标与渐变是矢量 SVG，不使用整页截图充当界面。
-
-本项目独立保存在仓库的 `onway/` 文件夹，与队友的 `octoscript-weather-assistant/` 分开维护。
-
-## 下载与运行
-
-- `bundle/`：当前 0.4.2 应用源码、清单、字体、图标与截图。
-- `prototypes/index.html`：可直接在浏览器中打开的 HTML 原型导航，包含 17 个场景。
-- `docs/在途_Onway_产品需求文档_V0.1.0.md`：产品需求文档。
-- `controller.splash`、`sync-prototypes.cjs`：业务控制器与原型转换脚本。
-- `check-prototype-pages.cjs`：原生宿主页面与交互检查脚本。
-
-运行原生应用需要另行准备 [OctoScript-App-Design-Flow](https://github.com/OctoSense-org/OctoScript-App-Design-Flow) 和 [OctoSense-App-Hub](https://github.com/OctoSense-org/OctoSense-App-Hub) 工具链。以下命令在 `onway/` 内执行，替换工具链路径：
-
-```text
-python <OctoScript-App-Design-Flow路径>/tools/octo run bundle --port 8141
-```
-
-核验仓库内的现有签名包时，指定开发公钥（公钥可公开，不包含私钥）：
-
-```text
-python <OctoScript-App-Design-Flow路径>/tools/octo check bundle --publisher-key dev=ea6e78d1aab7224923f9e014e9d6d87d6187a4f19839d1e312affd2cbda0074e
-```
-
-如需重新生成界面，先准备 Node.js 18 或更新版本及 Playwright：
-
-```text
-npm install --no-save --package-lock=false playwright
-npx playwright install chromium
-node sync-prototypes.cjs
-python <OctoScript-App-Design-Flow路径>/tools/octo check bundle
-```
-
-当前清单含本地开发签名；重新生成会使旧签名失效，需要使用自己的开发签名流程重新打戳、签名和检查。发布者与隐私政策仍是占位信息，正式发布前需替换。
-
-此目录不包含宿主工具链、发布密钥、个人应用数据或调试缓存。真实定位依赖下文描述的新版 Windows 宿主接口；普通宿主不一定支持，HTML 原型可以独立查看。
+此版本把`prototypes/01-*.html` 至 `17-*.html` 转换为可点击的原生 OctoSense 卡片。欢迎页、设置、方案、通勤阶段、异常和历史均已核验。背景、文字、滚动区和按钮是原生组件，图标与渐变是矢量 SVG，不使用整页截图充当界面。
 
 ## 当前范围
+
+- 新增 [MiniMax 后台与 API](backend/README.md)：读取地点名称、通勤偏好、阶段和最近30条历史，建议直接融合进通勤卡片。“智能通勤”开关位于原有设置中，默认关闭，开启前显示数据说明。后台密钥通过本地启动脚本输入，不进入 bundle。实时路线、班次、系统通知和宿主关闭后的定位仍需后续接入。
+- 内部卡片铺满并实时跟随窗口伸缩，底部按钮固定在可用区域；Octo 外框启动宽:高由独立窗口设置指定为 1:√2，无外侧留白及顶部导航工具栏。欢迎页随窗口布局，开始设置固定在底部；测试导航只在独立测试数据目录中通过 `dev-navigation.txt` 启用。
+- 当前版本为 0.5.4；本仓库 `bundle/` 保持 unsigned 开发状态，个人安装目录中的签名包和用户数据不上传。
 
 - 地点名称、方案选中、偏好和通知阈值能够保存。
 - 预览通勤流程可连续操作；预览到达不会写入真实历史。
@@ -61,8 +30,40 @@ python <OctoScript-App-Design-Flow路径>/tools/octo check bundle
 
 ## 本次验证
 
+2026-10-03（0.5.0）：在本目录重新验证后台8项测试、全部17页与完整交互回归，以及 AI 开关、数据快照、后台读取、建议卡片、返回通勤、去重和关闭流程。AI 联调使用明确标注的本地测试回复，真实 MiniMax 回复需配置有效密钥后验证。应用包检查通过，未提交商店；个人已安装数据未用于测试。
+
 2026-10-03：Windows 新宿主发布构建、现有定位权限测试、运行时补丁锁检查通过。0.4.2 签名包检查通过，加入本地目录第 9 版；没有提交外部商店，发布者与隐私政策仍为本地开发占位信息。
 
 独立 OctoSense 原生实例重新核验全部 17 页、首次设置、连续通勤、地点编辑、阈值、历史清空及补记。真实 Windows 定位返回位置，测试时精度约 76 米，未达到产品 50 米标记门槛；“使用当前位置”正确拒绝覆盖已保存坐标，并保留未保存输入，定时状态刷新也未重置输入。没有使用模拟定位，也没有把测试记录写入个人数据。尚未实测精度达标后的坐标保存及其他平台。
 
-上述历史验证记录来自开发工作区；调试目录和定位日志未上传。仓库内保留的应用截图位于 `bundle/screenshots/`。
+仓库截图位于 `bundle/screenshots/`。上述验证来自独立开发工作区；调试日志、定位数据和个人目录不上传。
+
+2026-10-03（0.5.3）：已验证 Octo 中全部17页及主要交互。原生窗口首次打开即采用完整外框宽480、高480×√2；在拖动过程中检查内部 board 与宿主内容区矩形完全相同，覆盖476×643、656×713、526×553等尺寸。外框比例只控制启动尺寸，后续允许自由伸缩。发布目录序号12，签名安装包版本0.5.3。
+
+宿主检查：Windows release 构建、桌面与 Home 的 mobile-apps 编译检查、两种打包的依赖图检查、运行时校验均通过。窗口相关4项单元测试通过。完整 Shell 测试615项通过、15项失败；失败集中于既有 Unix绝对路径、cargo/true可执行文件及macOS沙箱路径字符串假设在Windows上的兼容性，这些宿主平台测试不属于本仓库应用包，本次未修改对应模块。
+
+2026-10-03（0.5.4）：按11-已到达.html修复已到达页，保留原型内容和按钮。蓝色顶部铺满，白色底部连续覆盖整个可用区域，关闭按钮在滚动内容区内，底栏固定。17页及原有操作回归通过。
+
+## 仓库运行与开发
+
+本项目位于 `onway/`，与队友的 `octoscript-weather-assistant/` 独立维护。HTML 原型入口为 [原型导航](prototypes/原型导航.html)，产品需求文档位于 `docs/`。
+
+准备官方 OctoScript-App-Design-Flow 与 OctoSense App Hub 工具链后，在 `onway/` 内使用：
+
+```text
+python <OctoScript-App-Design-Flow路径>/tools/octo run bundle --port 8143 --app-data .local-state --detach
+```
+
+应用包已在开发工作区检查并完成 17 页交互验证。准备生成工具需要 Node.js 与 Playwright：
+
+```text
+npm install --no-save --package-lock=false playwright
+npx playwright install chromium
+node sync-prototypes.cjs
+```
+
+生成脚本已改用仓库内的 `prototypes/` 和普通 Playwright 安装；该可移植启动方式尚未在全新机器验证。生成后应重新检查 bundle 并按自己的发布流程签名；不要提交私钥。可用 `ONWAY_PROTOTYPES` 指定其他原型目录。后台启动及 MiniMax 接入详见 [后台说明](backend/README.md)。
+
+## 版本发布
+
+应用版本记录在 `bundle/manifest.json`；本版发布标签为 `onway-v0.5.4`。后续提交只更新本项目目录，天气助手独立版本和维护。

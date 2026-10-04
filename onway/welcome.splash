@@ -1,0 +1,32 @@
+SolidView{width: Fill height: Fill flow: Overlay padding: 0 draw_bg.color: #x0055b3
+    Svg{width: Fill height: Fill animating: false draw_svg.svg: http_resource("{{assets}}/assets/welcome-gradient.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+    View{width: Fill height: Fill flow: Down padding: 28 align: Align{x: 0.5} spacing: 0
+        ScrollYView{width: Fill height: Fill flow: Down align: Align{x: 0.5} padding: 0
+        View{width: Fill height: 24}
+        RoundedView{width: 72 height: 72 flow: Overlay align: Align{x: 0.5 y: 0.5} draw_bg.color: #xffffff26 draw_bg.border_radius: 18
+            Svg{width: 32 height: 32 draw_svg.svg: http_resource("{{assets}}/assets/welcome-arrow.svg")}
+        }
+        View{height: 24}
+        Label{text: "在途" draw_text.color: #xffffff draw_text.text_style: OnwayBold{font_size: 34}}
+        View{height: 8}
+        Label{text: "Onway · 你的通勤助手" draw_text.color: #xffffffb3 draw_text.text_style: OnwayRegular{font_size: 13}}
+        View{width: Fill height: 32}
+        View{width: 304 height: Fit flow: Down spacing: 22
+            View{width: Fill height: 32 flow: Right spacing: 16 align: Align{y: 0.5}
+                RoundedView{width: 32 height: 32 flow: Overlay align: Align{x: 0.5 y: 0.5} draw_bg.color: #xffffff1f draw_bg.border_radius: 8 Label{text: "+" draw_text.color: #xffffff draw_text.text_style: OnwayRegular{font_size: 24}}}
+                Label{text: "自动识别通勤场景" draw_text.color: #xffffffd9 draw_text.text_style: OnwayRegular{font_size: 12}}
+            }
+            View{width: Fill height: 32 flow: Right spacing: 16 align: Align{y: 0.5}
+                RoundedView{width: 32 height: 32 flow: Overlay align: Align{x: 0.5 y: 0.5} draw_bg.color: #xffffff1f draw_bg.border_radius: 8 Svg{width: 16 height: 16 draw_svg.svg: http_resource("{{assets}}/assets/welcome-clock.svg")}}
+                Label{text: "个人耗时学习" draw_text.color: #xffffffd9 draw_text.text_style: OnwayRegular{font_size: 12}}
+            }
+            View{width: Fill height: 32 flow: Right spacing: 16 align: Align{y: 0.5}
+                RoundedView{width: 32 height: 32 flow: Overlay align: Align{x: 0.5 y: 0.5} draw_bg.color: #xffffff1f draw_bg.border_radius: 8 Svg{width: 16 height: 16 draw_svg.svg: http_resource("{{assets}}/assets/welcome-alert.svg")}}
+                Label{text: "仅异常时提醒" draw_text.color: #xffffffd9 draw_text.text_style: OnwayRegular{font_size: 12}}
+            }
+        }
+        View{width: Fill height: 24}
+        }
+        hit_welcome_1_0 := ButtonFlat{width: Fill height: 52 text: "开始设置" draw_bg +: {color: #xfffffff2 color_hover: #xffffffff color_down: #xffffffe0 border_radius: 12 border_size: 0} draw_text +: {color: #x0066cc color_hover: #x0066cc color_down: #x0066cc text_style: OnwayBold{font_size: 14}} on_click: || setScreen("locations")}
+    }
+}

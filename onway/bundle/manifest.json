@@ -10,11 +10,8 @@
   },
   "id": "onway",
   "integrity": {
-    "bundle_blake3": "beed089e9c27f4e418bd8f4c6f919a62094dd46918d3d23ff3b0286045605646",
-    "signature": {
-      "key_id": "dev",
-      "value": "a2db740a72c3ab63e8cf3c665a5e7b7324c6c2aff2ca1211e56e1d371e88ef7e4c7f076a3df41853e2b3a31651c1b44e91de8a61a403df2404f1109663444402"
-    }
+    "bundle_blake3": "062d2903536e2aafe9282b60edcda829c4832a36ed46c9487af72494959a3f84",
+    "signature": null
   },
   "name": "在途",
   "network": {
@@ -24,5 +21,5 @@
   "storage": {
     "max_bytes": null
   },
-  "version": "0.4.2"
+  "version": "0.5.4"
 }

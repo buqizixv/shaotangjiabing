@@ -1,0 +1,60 @@
+// Local backend bridge. No credentials or network bypass inside the bundle.
+let aiEnabled = false
+let aiCard = nil
+let aiSeen = ""
+let aiNote = "智能通勤尚未开启"
+let devNavigation = false
+
+fn aiStage(){
+    if screen == "settings" { return settingsBack }
+    return screen
+}
+
+fn aiSnapshot(){
+    if cfg == nil { return }
+    let recent = []
+    for i in hist.len() { if i >= hist.len() - 30 { recent.push(hist[i]) } }
+    fs.write("ai-context.json", {schema: 1, epoch: time_now(), enabled: aiEnabled,
+        demo: demoMode, stage: aiStage(), locationTrusted: hasFix,
+        config: {homeName: cfg.homeName, workName: cfg.workName, selectedPlan: cfg.selectedPlan,
+            threshold: cfg.threshold, anomalyNotice: cfg.anomalyNotice}, history: recent}.to_json())
+}
+
+fn toggleAI(){
+    aiEnabled = aiEnabled == false
+    fs.write("ai-enabled.txt", if aiEnabled {"true"} else {"false"})
+    if aiEnabled { aiNote = "已开启，等待后台分析" }
+    else { aiNote = "AI 建议已关闭"; aiCard = nil }
+    aiSnapshot()
+    ui.board.render()
+}
+
+fn dismissAI(){ aiCard = nil; ui.board.render() }
+
+fn aiPoll(){
+    if cfg == nil { return }
+    if aiEnabled { readLocation() }
+    aiSnapshot()
+    if aiEnabled == false || fs.exists("ai-result.json") == false { return }
+    let result = fs.read("ai-result.json").parse_json()
+    if result == nil || result.schema != 1 { return }
+    aiNote = result.message
+    if result.action == "push_card" && result.id != aiSeen && result.expires > time_now() {
+        if result.stage == aiStage() && result.demo == demoMode {
+            aiSeen = result.id
+            aiCard = result
+            fs.write("ai-seen.txt", aiSeen)
+            // Update the current commute card without navigating away.
+            ui.board.render()
+        }
+    }
+    if screen == "settings" { ui.ai_status.set_text(aiNote) }
+}
+
+start_timeout(0.2, || {
+    if fs.exists("dev-navigation.txt") { devNavigation = fs.read("dev-navigation.txt") == "true"; ui.board.render() }
+    if fs.exists("ai-enabled.txt") { aiEnabled = fs.read("ai-enabled.txt") == "true" }
+    if fs.exists("ai-seen.txt") { aiSeen = fs.read("ai-seen.txt") }
+    aiPoll()
+})
+start_interval(3.0, || aiPoll())

@@ -1,18 +1,30 @@
 {
   "schema": 1,
   "subtitle": "只显示当前该看的那张通勤卡片",
-  "description": "在途（Onway）产品原型预览版：以 17 张原型卡片展示欢迎、首次设置、步行、候车、乘车、换乘、到达、异常、设置与历史。支持保存地点名称、选择方案、修改偏好与阈值、手动补记及清空本地历史；预览中的路线、班次与初始历史为设计示例，尚未接入实时路线和班次服务。",
+  "description": "在途（Onway）通勤卡片：以随窗口伸缩的主卡片展示设置、步行、候车、乘车、换乘、到达、异常及历史。智能通勤建议融合在原有卡片中，由本地 MiniMax 后台分析地点名称、偏好与最近30条历史。密钥只保存在后台；路线、班次仍为原型示例，真实模型回复需配置有效密钥后验证。",
   "category": "travel",
-  "keywords": ["onway", "commute", "transit", "在途", "通勤"],
-  "screenshots": ["screenshots/01-main.png", "screenshots/02-waiting.png", "screenshots/03-first-run.png"],
+  "keywords": [
+    "onway",
+    "commute",
+    "transit",
+    "在途",
+    "通勤"
+  ],
+  "screenshots": [
+    "screenshots/04-ratio-welcome.png",
+    "screenshots/02-waiting.png",
+    "screenshots/03-first-run.png"
+  ],
   "icon": "assets/icon.svg",
-  "platforms": ["windows"],
+  "platforms": [
+    "windows"
+  ],
   "publisher": {
     "name": "Replace with your publisher name",
     "support": "https://example.com/support",
     "privacy_policy_url": "https://example.com/privacy"
   },
-  "release_notes": "v0.4.2：增加真实定位检查及当前位置标记，仅在使用定位页面时请求位置，检查时效与精度；定位失败保留已输入的地点。路线、班次仍为原型示例，未启用自动通勤记录。",
+  "release_notes": "v0.5.4：按原型修复已到达页面的蓝色顶部与连续白色底部，修正关闭操作和底栏之间露出的深色背景；保留原型文案与交互。",
   "age_rating": "all",
   "license": "Apache-2.0"
 }

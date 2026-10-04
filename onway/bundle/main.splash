@@ -210,6 +210,70 @@ fn clearHistory(){hist=[];historyEdited=true;fs.write("history-edited.txt","true
 fn manualTrip(){let d=manualMinutes.trim().to_f64(); if d>=1 && d<=1440 {hist.push({epoch:time_now(),direction:"to_work",plan:cfg.selectedPlan,durMin:round(d)});historyEdited=true;fs.write("history-edited.txt","true");save();setScreen("history")} else {notice="请输入 1～1440 分钟";ui.board.render()}}
 fn historyAverage(){let total=0;for trip in hist {total=total+trip.durMin};if hist.len()>0 {return round(total/hist.len())};return 0}
 
+// BEGIN ONWAY AI
+// Local backend bridge. No credentials or network bypass inside the bundle.
+let aiEnabled = false
+let aiCard = nil
+let aiSeen = ""
+let aiNote = "智能通勤尚未开启"
+let devNavigation = false
+
+fn aiStage(){
+    if screen == "settings" { return settingsBack }
+    return screen
+}
+
+fn aiSnapshot(){
+    if cfg == nil { return }
+    let recent = []
+    for i in hist.len() { if i >= hist.len() - 30 { recent.push(hist[i]) } }
+    fs.write("ai-context.json", {schema: 1, epoch: time_now(), enabled: aiEnabled,
+        demo: demoMode, stage: aiStage(), locationTrusted: hasFix,
+        config: {homeName: cfg.homeName, workName: cfg.workName, selectedPlan: cfg.selectedPlan,
+            threshold: cfg.threshold, anomalyNotice: cfg.anomalyNotice}, history: recent}.to_json())
+}
+
+fn toggleAI(){
+    aiEnabled = aiEnabled == false
+    fs.write("ai-enabled.txt", if aiEnabled {"true"} else {"false"})
+    if aiEnabled { aiNote = "已开启，等待后台分析" }
+    else { aiNote = "AI 建议已关闭"; aiCard = nil }
+    aiSnapshot()
+    ui.board.render()
+}
+
+fn dismissAI(){ aiCard = nil; ui.board.render() }
+
+fn aiPoll(){
+    if cfg == nil { return }
+    if aiEnabled { readLocation() }
+    aiSnapshot()
+    if aiEnabled == false || fs.exists("ai-result.json") == false { return }
+    let result = fs.read("ai-result.json").parse_json()
+    if result == nil || result.schema != 1 { return }
+    aiNote = result.message
+    if result.action == "push_card" && result.id != aiSeen && result.expires > time_now() {
+        if result.stage == aiStage() && result.demo == demoMode {
+            aiSeen = result.id
+            aiCard = result
+            fs.write("ai-seen.txt", aiSeen)
+            // Update the current commute card without navigating away.
+            ui.board.render()
+        }
+    }
+    if screen == "settings" { ui.ai_status.set_text(aiNote) }
+}
+
+start_timeout(0.2, || {
+    if fs.exists("dev-navigation.txt") { devNavigation = fs.read("dev-navigation.txt") == "true"; ui.board.render() }
+    if fs.exists("ai-enabled.txt") { aiEnabled = fs.read("ai-enabled.txt") == "true" }
+    if fs.exists("ai-seen.txt") { aiSeen = fs.read("ai-seen.txt") }
+    aiPoll()
+})
+start_interval(3.0, || aiPoll())
+
+let OnwayAI = TextStyle{font_family: FontFamily{latin := FontMember{res: http_resource("{{assets}}/assets/NotoSansSC-AI-Regular.otf") asc: -0.2 desc: 0.08 weight: 400}} line_spacing: 1.2}
+// END ONWAY AI
 let OnwayRegular = TextStyle{font_family: FontFamily{latin := FontMember{res: http_resource("{{assets}}/assets/NotoSansSC-Onway-Regular.ttf") asc: -0.2 desc: 0.08 weight: 400}} line_spacing: 1.0}
 let OnwayBold = TextStyle{font_family: FontFamily{latin := FontMember{res: http_resource("{{assets}}/assets/NotoSansSC-Onway-Bold.ttf") asc: -0.2 desc: 0.08 weight: 700}} line_spacing: 1.0}
 let OnwayHit = ButtonFlat{padding: 0 draw_bg +: {color: #x00000000 color_hover: #x00000000 color_down: #x00000008 border_size: 0.0} draw_text.color: #x00000000}
@@ -217,69 +281,83 @@ let MenuButton = ButtonFlat{width: Fill height: 40 draw_bg +: {color: #x303033 c
 let MenuTitle = Label{draw_text.color: #xffffff draw_text.text_style: OnwayBold{font_size: 18}}
 
 let OnwayScroll = ScrollYView{scroll_bars.scroll_bar_y.draw_bg.color: #x00000000 scroll_bars.scroll_bar_y.draw_bg.color_hover: #x00000000 scroll_bars.scroll_bar_y.draw_bg.color_drag: #x00000000 scroll_bars.scroll_bar_y.draw_bg.border_color: #x00000000 scroll_bars.scroll_bar_y.draw_bg.border_color_hover: #x00000000 scroll_bars.scroll_bar_y.draw_bg.border_color_drag: #x00000000}
-SolidView{width: Fill height: Fill flow: Down align: Align{x: 0.5 y: 0.5} padding: 20 draw_bg.color: #xf5f5f7
-board := View{clip_x: false clip_y: false width: 360 height: Fit flow: Down spacing: 16 on_render: || {
- View{width: Fill height: 18 flow: Right align: Align{x: 0.5 y: 0.5}
- ButtonFlat{text: "‹  返回导航" width: Fit height: 18 padding: 0 draw_bg +: {color: #x00000000 color_hover: #x00000000 color_down: #x00000000 border_size: 0.0} draw_text +: {color: #x86868b color_hover: #x0066cc text_style: OnwayRegular{font_size: 9.75}} on_click: || setScreen("navigation")}
-}
+SolidView{width: Fill height: Fill flow: Overlay padding: 0 draw_bg.color: #x272729
+board := View{width: Fill height: Fill flow: Down spacing: 0 on_render: || {
+if devNavigation {View{width: Fill height: 18 flow: Right ButtonFlat{text: "‹  返回导航" height: 18 on_click: || setScreen("navigation")}}}
 if screen == "welcome" {
-RoundedShadowView{width: 360 height: 509 flow: Overlay padding: 0 clip_x: false clip_y: false draw_bg.color: #x0055b3 draw_bg.border_radius: 14.0 draw_bg.shadow_radius: 60.0 draw_bg.shadow_offset: vec2(0, 25) draw_bg.shadow_color: #x0050b433
-Svg{width: 360 height: 509 margin: Inset{left: 0 top: 0} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-001.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
-View{width: 360 height: 414.609 margin: Inset{left: 0 top: 0} flow: Overlay padding: 0 clip_x: true clip_y: true
-RoundedAllView{width: 72 height: 72 margin: Inset{left: 144 top: 39.906} flow: Overlay padding: 0 draw_bg.color: #xffffff26 draw_bg.border_radius: vec4(10, 10, 10, 10) draw_bg.color_dither: 0.0}
-Svg{width: 32 height: 32 margin: Inset{left: 164 top: 59.906} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-002.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
-View{width: 79 height: 55 margin: Inset{left: 143 top: 134.906} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "在途" draw_text.color: #xffffffff draw_text.text_style: OnwayBold{font_size: 28.5 letter_spacing: -1}}}
-View{width: 182.766 height: 24 margin: Inset{left: 91.109 top: 186.5} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "Onway · 你的通勤助手" draw_text.color: #xffffffb3 draw_text.text_style: OnwayRegular{font_size: 12 letter_spacing: 0.5}}}
-RoundedAllView{width: 32 height: 32 margin: Inset{left: 28 top: 255.688} flow: Overlay padding: 0 draw_bg.color: #xffffff1f draw_bg.border_radius: vec4(5, 5, 5, 5) draw_bg.color_dither: 0.0}
-Svg{width: 16 height: 16 margin: Inset{left: 36 top: 263.688} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-003.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
-View{width: 125 height: 21 margin: Inset{left: 74 top: 260.688} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "自动识别通勤场景" draw_text.color: #xffffffd9 draw_text.text_style: OnwayRegular{font_size: 11.25 letter_spacing: 0}}}
-RoundedAllView{width: 32 height: 32 margin: Inset{left: 28 top: 309.688} flow: Overlay padding: 0 draw_bg.color: #xffffff1f draw_bg.border_radius: vec4(5, 5, 5, 5) draw_bg.color_dither: 0.0}
-Svg{width: 16 height: 16 margin: Inset{left: 36 top: 317.688} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-004.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
-View{width: 95 height: 21 margin: Inset{left: 74 top: 314.688} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "个人耗时学习" draw_text.color: #xffffffd9 draw_text.text_style: OnwayRegular{font_size: 11.25 letter_spacing: 0}}}
-RoundedAllView{width: 32 height: 32 margin: Inset{left: 28 top: 363.688} flow: Overlay padding: 0 draw_bg.color: #xffffff1f draw_bg.border_radius: vec4(5, 5, 5, 5) draw_bg.color_dither: 0.0}
-Svg{width: 16 height: 16 margin: Inset{left: 36 top: 371.688} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-005.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
-View{width: 95 height: 21 margin: Inset{left: 74 top: 368.688} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "仅异常时提醒" draw_text.color: #xffffffd9 draw_text.text_style: OnwayRegular{font_size: 11.25 letter_spacing: 0}}}
+SolidView{width: Fill height: Fill flow: Overlay padding: 0 draw_bg.color: #x0055b3
+    Svg{width: Fill height: Fill animating: false draw_svg.svg: http_resource("{{assets}}/assets/welcome-gradient.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+    View{width: Fill height: Fill flow: Down padding: 28 align: Align{x: 0.5} spacing: 0
+        OnwayScroll{width: Fill height: Fill flow: Down align: Align{x: 0.5} padding: 0
+        View{width: Fill height: 24}
+        RoundedView{width: 72 height: 72 flow: Overlay align: Align{x: 0.5 y: 0.5} draw_bg.color: #xffffff26 draw_bg.border_radius: 18
+            Svg{width: 32 height: 32 draw_svg.svg: http_resource("{{assets}}/assets/welcome-arrow.svg")}
+        }
+        View{height: 24}
+        Label{text: "在途" draw_text.color: #xffffff draw_text.text_style: OnwayBold{font_size: 34}}
+        View{height: 8}
+        Label{text: "Onway · 你的通勤助手" draw_text.color: #xffffffb3 draw_text.text_style: OnwayRegular{font_size: 13}}
+        View{width: Fill height: 32}
+        View{width: 304 height: Fit flow: Down spacing: 22
+            View{width: Fill height: 32 flow: Right spacing: 16 align: Align{y: 0.5}
+                RoundedView{width: 32 height: 32 flow: Overlay align: Align{x: 0.5 y: 0.5} draw_bg.color: #xffffff1f draw_bg.border_radius: 8 Label{text: "+" draw_text.color: #xffffff draw_text.text_style: OnwayRegular{font_size: 24}}}
+                Label{text: "自动识别通勤场景" draw_text.color: #xffffffd9 draw_text.text_style: OnwayRegular{font_size: 12}}
+            }
+            View{width: Fill height: 32 flow: Right spacing: 16 align: Align{y: 0.5}
+                RoundedView{width: 32 height: 32 flow: Overlay align: Align{x: 0.5 y: 0.5} draw_bg.color: #xffffff1f draw_bg.border_radius: 8 Svg{width: 16 height: 16 draw_svg.svg: http_resource("{{assets}}/assets/welcome-clock.svg")}}
+                Label{text: "个人耗时学习" draw_text.color: #xffffffd9 draw_text.text_style: OnwayRegular{font_size: 12}}
+            }
+            View{width: Fill height: 32 flow: Right spacing: 16 align: Align{y: 0.5}
+                RoundedView{width: 32 height: 32 flow: Overlay align: Align{x: 0.5 y: 0.5} draw_bg.color: #xffffff1f draw_bg.border_radius: 8 Svg{width: 16 height: 16 draw_svg.svg: http_resource("{{assets}}/assets/welcome-alert.svg")}}
+                Label{text: "仅异常时提醒" draw_text.color: #xffffffd9 draw_text.text_style: OnwayRegular{font_size: 12}}
+            }
+        }
+        View{width: Fill height: 24}
+        }
+        hit_welcome_1_0 := ButtonFlat{width: Fill height: 52 text: "开始设置" draw_bg +: {color: #xfffffff2 color_hover: #xffffffff color_down: #xffffffe0 border_radius: 12 border_size: 0} draw_text +: {color: #x0066cc color_hover: #x0066cc color_down: #x0066cc text_style: OnwayBold{font_size: 14}} on_click: || setScreen("locations")}
+    }
+}
 
 }
-View{width: 360 height: 94.391 margin: Inset{left: 0 top: 414.609} flow: Overlay padding: 0 clip_x: true clip_y: true
-RoundedAllView{width: 304 height: 50.391 margin: Inset{left: 28 top: 16} flow: Overlay padding: 0 draw_bg.color: #xfffffff2 draw_bg.border_radius: vec4(8, 8, 8, 8) draw_bg.color_dither: 0.0}
-View{width: 72.203 height: 25 margin: Inset{left: 146.391 top: 28} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "开始设置" draw_text.color: #x0066ccff draw_text.text_style: OnwayBold{font_size: 12.75 letter_spacing: -0.2}}}
-hit_welcome_1_0 := OnwayHit{width: 304 height: 50.391 margin: Inset{left: 28 top: 16} text: "" on_click: || setScreen("locations")}
-}
-}
-}
 elif screen == "locations" {
-RoundedShadowView{width: 360 height: 509 flow: Overlay padding: 0 clip_x: false clip_y: false draw_bg.color: #x272729ff draw_bg.border_radius: 14.0 draw_bg.shadow_radius: 60.0 draw_bg.shadow_offset: vec2(0, 25) draw_bg.shadow_color: #x0000001f
-View{width: 360 height: 415.813 margin: Inset{left: 0 top: 0} flow: Overlay padding: 0 clip_x: true clip_y: true
+SolidView{width: Fill height: Fill flow: Overlay padding: 0 draw_bg.color: #x272729ff
+View{width: Fill height: Fill flow: Down padding: 0 spacing: 0
+OnwayScroll{width: Fill height: Fill flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
+View{width: 360 height: 416 flow: Overlay padding: 0
 View{width: 94.578 height: 17 margin: Inset{left: 28 top: 30} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "第 1 步，共 3 步" draw_text.color: #xffffff4d draw_text.text_style: OnwayRegular{font_size: 9 letter_spacing: 0.5}}}
 View{width: 115 height: 40 margin: Inset{left: 28 top: 50.391} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "标记地点" draw_text.color: #xffffffff draw_text.text_style: OnwayBold{font_size: 21 letter_spacing: -0.5}}}
-Svg{width: 14 height: 14 margin: Inset{left: 28 top: 116.781} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-006.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 14 height: 14 margin: Inset{left: 28 top: 116.781} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-001.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 18 height: 19 margin: Inset{left: 48 top: 113.984} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "家" draw_text.color: #xffffff66 draw_text.text_style: OnwayRegular{font_size: 9.75 letter_spacing: 0}}}
 RoundedAllView{width: 304 height: 48 margin: Inset{left: 28 top: 139.578} flow: Overlay padding: 0 draw_bg.color: #x2997ff0f draw_bg.border_radius: vec4(7, 7, 7, 7) draw_bg.color_dither: 0.0 draw_bg.border_size: 1 draw_bg.border_color: #x2997ff4d}
 View{width: 277 height: 22 margin: Inset{left: 44 top: 153.578} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: if cfg.homeName == "望京西园四区" {"朝阳区望京西园四区"} else {cfg.homeName} draw_text.color: #xffffffff draw_text.text_style: OnwayRegular{font_size: 11.25 letter_spacing: 0}}}
-Svg{width: 14 height: 14 margin: Inset{left: 28 top: 208.375} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-007.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 14 height: 14 margin: Inset{left: 28 top: 208.375} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-002.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 44 height: 19 margin: Inset{left: 48 top: 205.578} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "目的地" draw_text.color: #xffffff66 draw_text.text_style: OnwayRegular{font_size: 9.75 letter_spacing: 0}}}
 RoundedAllView{width: 304 height: 48 margin: Inset{left: 28 top: 231.172} flow: Overlay padding: 0 draw_bg.color: #xffffff0f draw_bg.border_radius: vec4(7, 7, 7, 7) draw_bg.color_dither: 0.0 draw_bg.border_size: 1 draw_bg.border_color: #xffffff14}
 View{width: 277 height: 22 margin: Inset{left: 44 top: 245.172} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: if cfg.workName == "中关村软件园" {"搜索或使用当前位置"} else {cfg.workName} draw_text.color: #xffffff33 draw_text.text_style: OnwayRegular{font_size: 11.25 letter_spacing: 0}}}
-Svg{width: 12 height: 12 margin: Inset{left: 28 top: 288.969} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-008.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 12 height: 12 margin: Inset{left: 28 top: 288.969} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-003.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 83 height: 19 margin: Inset{left: 44 top: 285.172} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "使用当前位置" draw_text.color: #x2997ffff draw_text.text_style: OnwayRegular{font_size: 9.75 letter_spacing: 0}}}
 RoundedAllView{width: 304 height: 85.047 margin: Inset{left: 28 top: 330.766} flow: Overlay padding: 0 draw_bg.color: #xffffff08 draw_bg.border_radius: vec4(8, 8, 8, 8) draw_bg.color_dither: 0.0 draw_bg.border_size: 1 draw_bg.border_color: #xffffff0f}
-Svg{width: 24 height: 24 margin: Inset{left: 168 top: 349.5} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-009.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 24 height: 24 margin: Inset{left: 168 top: 349.5} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-004.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 309 height: 17 margin: Inset{left: 28 top: 380.688} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0.5 y: 0.5} text: if setupNote == "当前显示原型示例地点" {"地图预览"} else {setupNote} draw_text.color: #xffffff26 draw_text.text_style: OnwayRegular{font_size: 9 letter_spacing: 0}}}
 hit_locations_0_0 := OnwayHit{width: 304 height: 48 margin: Inset{left: 28 top: 139.578} text: "" on_click: || editLocation(true)}
 hit_locations_0_1 := OnwayHit{width: 304 height: 48 margin: Inset{left: 28 top: 231.172} text: "" on_click: || editLocation(false)}
 hit_locations_0_2 := OnwayHit{width: 304 height: 15.594 margin: Inset{left: 28 top: 287.172} text: "" on_click: || markWork()}
 }
-View{width: 360 height: 93.188 margin: Inset{left: 0 top: 415.813} flow: Overlay padding: 0 clip_x: true clip_y: true
+}
+View{width: Fill height: 93.188 flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
+View{width: 360 height: 93.188 flow: Overlay padding: 0
 RoundedAllView{width: 304 height: 49.188 margin: Inset{left: 28 top: 16} flow: Overlay padding: 0 draw_bg.color: #x2997ffff draw_bg.border_radius: vec4(8, 8, 8, 8) draw_bg.color_dither: 0.0}
 View{width: 165 height: 24 margin: Inset{left: 100 top: 28} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "下一步：选择通勤方案" draw_text.color: #xffffffff draw_text.text_style: OnwayBold{font_size: 12 letter_spacing: 0}}}
 hit_locations_1_0 := OnwayHit{width: 304 height: 49.188 margin: Inset{left: 28 top: 16} text: "" on_click: || setScreen("plans")}
 }
 }
 }
+}
+}
 elif screen == "plans" {
-RoundedShadowView{width: 360 height: 509 flow: Overlay padding: 0 clip_x: false clip_y: false draw_bg.color: #x272729ff draw_bg.border_radius: 14.0 draw_bg.shadow_radius: 60.0 draw_bg.shadow_offset: vec2(0, 25) draw_bg.shadow_color: #x0000001f
-OnwayScroll{width: 360 height: 415.813 margin: Inset{left: 0 top: 0} flow: Down padding: 0 clip_x: true clip_y: true
+SolidView{width: Fill height: Fill flow: Overlay padding: 0 draw_bg.color: #x272729ff
+View{width: Fill height: Fill flow: Down padding: 0 spacing: 0
+OnwayScroll{width: Fill height: Fill flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
 View{width: 360 height: 563 flow: Overlay padding: 0
 View{width: 94.578 height: 17 margin: Inset{left: 28 top: 30} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "第 2 步，共 3 步" draw_text.color: #xffffff4d draw_text.text_style: OnwayRegular{font_size: 9 letter_spacing: 0.5}}}
 View{width: 115 height: 40 margin: Inset{left: 28 top: 50.391} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "选择方案" draw_text.color: #xffffffff draw_text.text_style: OnwayBold{font_size: 21 letter_spacing: -0.5}}}
@@ -288,7 +366,7 @@ RoundedAllView{width: 304 height: 125.563 margin: Inset{left: 28 top: 129.578} d
 View{width: 41 height: 17 margin: Inset{left: 45 top: 144.578} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "方案一" draw_text.color: if cfg.selectedPlan == 0 {#x2997ff} else {#xffffff66} draw_text.text_style: OnwayRegular{font_size: 9 letter_spacing: 0}}}
 View{width: 104.859 height: 32 margin: Inset{left: 45 top: 157.969} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "约 48 分钟" draw_text.color: if cfg.selectedPlan == 0 {#x2997ff} else {#xffffff} draw_text.text_style: OnwayBold{font_size: 16.5 letter_spacing: -0.3}}}
 RoundedView{width: 20 height: 20 margin: Inset{left: 295 top: 156.969} draw_bg.border_radius: 5.0 draw_bg.border_size: 1.5 draw_bg.color: if cfg.selectedPlan == 0 {#x2997ff} else {#x00000000} draw_bg.border_color: if cfg.selectedPlan == 0 {#x2997ff} else {#xffffff26}}
-if cfg.selectedPlan == 0 {Svg{width: 12 height: 12 margin: Inset{left: 299 top: 160.969} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-010.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}}
+if cfg.selectedPlan == 0 {Svg{width: 12 height: 12 margin: Inset{left: 299 top: 160.969} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-005.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}}
 RoundedAllView{width: 61.359 height: 20.391 margin: Inset{left: 45 top: 195.359} flow: Overlay padding: 0 draw_bg.color: #xffffff0f draw_bg.border_radius: vec4(3, 3, 3, 3) draw_bg.color_dither: 0.0}
 View{width: 50.359 height: 17 margin: Inset{left: 53 top: 196.359} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "步行 8分" draw_text.color: #xffffff80 draw_text.text_style: OnwayRegular{font_size: 9 letter_spacing: 0}}}
 View{width: 16 height: 16 margin: Inset{left: 112.359 top: 196.953} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "→" draw_text.color: #xffffff33 draw_text.text_style: OnwayRegular{font_size: 8.25 letter_spacing: 0}}}
@@ -302,7 +380,7 @@ RoundedAllView{width: 304 height: 151.953 margin: Inset{left: 28 top: 265.141} d
 View{width: 41 height: 17 margin: Inset{left: 45 top: 280.141} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "方案二" draw_text.color: if cfg.selectedPlan == 1 {#x2997ff} else {#xffffff66} draw_text.text_style: OnwayRegular{font_size: 9 letter_spacing: 0}}}
 View{width: 104.859 height: 32 margin: Inset{left: 45 top: 293.531} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "约 52 分钟" draw_text.color: if cfg.selectedPlan == 1 {#x2997ff} else {#xffffff} draw_text.text_style: OnwayBold{font_size: 16.5 letter_spacing: -0.3}}}
 RoundedView{width: 20 height: 20 margin: Inset{left: 295 top: 292.531} draw_bg.border_radius: 5.0 draw_bg.border_size: 1.5 draw_bg.color: if cfg.selectedPlan == 1 {#x2997ff} else {#x00000000} draw_bg.border_color: if cfg.selectedPlan == 1 {#x2997ff} else {#xffffff26}}
-if cfg.selectedPlan == 1 {Svg{width: 12 height: 12 margin: Inset{left: 299 top: 296.531} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-011.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}}
+if cfg.selectedPlan == 1 {Svg{width: 12 height: 12 margin: Inset{left: 299 top: 296.531} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-006.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}}
 RoundedAllView{width: 61.359 height: 20.391 margin: Inset{left: 45 top: 330.922} flow: Overlay padding: 0 draw_bg.color: #xffffff0f draw_bg.border_radius: vec4(3, 3, 3, 3) draw_bg.color_dither: 0.0}
 View{width: 50.359 height: 17 margin: Inset{left: 53 top: 331.922} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "步行 5分" draw_text.color: #xffffff80 draw_text.text_style: OnwayRegular{font_size: 9 letter_spacing: 0}}}
 View{width: 16 height: 16 margin: Inset{left: 112.359 top: 332.516} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "→" draw_text.color: #xffffff33 draw_text.text_style: OnwayRegular{font_size: 8.25 letter_spacing: 0}}}
@@ -322,7 +400,7 @@ RoundedAllView{width: 304 height: 125.563 margin: Inset{left: 28 top: 427.094} d
 View{width: 41 height: 17 margin: Inset{left: 45 top: 442.094} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "方案三" draw_text.color: if cfg.selectedPlan == 2 {#x2997ff} else {#xffffff66} draw_text.text_style: OnwayRegular{font_size: 9 letter_spacing: 0}}}
 View{width: 104.859 height: 32 margin: Inset{left: 45 top: 455.484} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "约 61 分钟" draw_text.color: if cfg.selectedPlan == 2 {#x2997ff} else {#xffffff} draw_text.text_style: OnwayBold{font_size: 16.5 letter_spacing: -0.3}}}
 RoundedView{width: 20 height: 20 margin: Inset{left: 295 top: 454.484} draw_bg.border_radius: 5.0 draw_bg.border_size: 1.5 draw_bg.color: if cfg.selectedPlan == 2 {#x2997ff} else {#x00000000} draw_bg.border_color: if cfg.selectedPlan == 2 {#x2997ff} else {#xffffff26}}
-if cfg.selectedPlan == 2 {Svg{width: 12 height: 12 margin: Inset{left: 299 top: 458.484} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-012.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}}
+if cfg.selectedPlan == 2 {Svg{width: 12 height: 12 margin: Inset{left: 299 top: 458.484} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-007.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}}
 RoundedAllView{width: 61.359 height: 20.391 margin: Inset{left: 45 top: 492.875} flow: Overlay padding: 0 draw_bg.color: #xffffff0f draw_bg.border_radius: vec4(3, 3, 3, 3) draw_bg.color_dither: 0.0}
 View{width: 50.359 height: 17 margin: Inset{left: 53 top: 493.875} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "步行 3分" draw_text.color: #xffffff80 draw_text.text_style: OnwayRegular{font_size: 9 letter_spacing: 0}}}
 View{width: 16 height: 16 margin: Inset{left: 112.359 top: 494.469} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "→" draw_text.color: #xffffff33 draw_text.text_style: OnwayRegular{font_size: 8.25 letter_spacing: 0}}}
@@ -337,29 +415,33 @@ hit_plans_0_1 := OnwayHit{width: 304 height: 151.953 margin: Inset{left: 28 top:
 hit_plans_0_2 := OnwayHit{width: 304 height: 125.563 margin: Inset{left: 28 top: 427.094} text: "" on_click: || selectPlan(2)}
 }
 }
-View{width: 360 height: 93.188 margin: Inset{left: 0 top: 415.813} flow: Overlay padding: 0 clip_x: true clip_y: true
+View{width: Fill height: 93.188 flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
+View{width: 360 height: 93.188 flow: Overlay padding: 0
 RoundedAllView{width: 304 height: 49.188 margin: Inset{left: 28 top: 16} flow: Overlay padding: 0 draw_bg.color: #x2997ffff draw_bg.border_radius: vec4(8, 8, 8, 8) draw_bg.color_dither: 0.0}
 View{width: 69 height: 24 margin: Inset{left: 148 top: 28} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "保存方案" draw_text.color: #xffffffff draw_text.text_style: OnwayBold{font_size: 12 letter_spacing: 0}}}
 hit_plans_1_0 := OnwayHit{width: 304 height: 49.188 margin: Inset{left: 28 top: 16} text: "" on_click: || setScreen("permissions")}
 }
 }
 }
+}
+}
 elif screen == "permissions" {
-RoundedShadowView{width: 360 height: 509 flow: Overlay padding: 0 clip_x: false clip_y: false draw_bg.color: #x272729ff draw_bg.border_radius: 14.0 draw_bg.shadow_radius: 60.0 draw_bg.shadow_offset: vec2(0, 25) draw_bg.shadow_color: #x0000001f
-OnwayScroll{width: 360 height: 415.813 margin: Inset{left: 0 top: 0} flow: Down padding: 0 clip_x: true clip_y: true
+SolidView{width: Fill height: Fill flow: Overlay padding: 0 draw_bg.color: #x272729ff
+View{width: Fill height: Fill flow: Down padding: 0 spacing: 0
+OnwayScroll{width: Fill height: Fill flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
 View{width: 360 height: 449 flow: Overlay padding: 0
 View{width: 94.578 height: 17 margin: Inset{left: 28 top: 30} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "第 3 步，共 3 步" draw_text.color: #xffffff4d draw_text.text_style: OnwayRegular{font_size: 9 letter_spacing: 0.5}}}
 View{width: 115 height: 40 margin: Inset{left: 28 top: 50.391} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "完善设置" draw_text.color: #xffffffff draw_text.text_style: OnwayBold{font_size: 21 letter_spacing: -0.5}}}
 View{width: 271 height: 20 margin: Inset{left: 28 top: 95.984} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "为了在锁屏后继续记录通勤，需要以下权限" draw_text.color: #xffffff66 draw_text.text_style: OnwayRegular{font_size: 10.5 letter_spacing: 0}}}
 RoundedAllView{width: 304 height: 113 margin: Inset{left: 28 top: 148.984} flow: Overlay padding: 0 draw_bg.color: #xffffff0a draw_bg.border_radius: vec4(8, 8, 8, 8) draw_bg.color_dither: 0.0}
-Svg{width: 16 height: 16 margin: Inset{left: 46 top: 173.984} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-013.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 16 height: 16 margin: Inset{left: 46 top: 173.984} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-008.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 69 height: 24 margin: Inset{left: 70 top: 169.391} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "后台定位" draw_text.color: #xffffffff draw_text.text_style: OnwayBold{font_size: 12 letter_spacing: 0}}}
 RoundedView{width: 50 height: 30 margin: Inset{left: 264 top: 166.984} draw_bg.border_radius: 7.5 draw_bg.color: if cfg.backgroundLocation {#x30d158} else {#x444446}}
 RoundedView{width: 26 height: 26 margin: Inset{left: if cfg.backgroundLocation {286} else {266} top: 168.984} draw_bg.border_radius: 6.5 draw_bg.color: #xffffff}
 View{width: 265 height: 19 margin: Inset{left: 46 top: 204.984} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "锁屏或切换应用后继续记录通勤进度，自动识" draw_text.color: #xffffff59 draw_text.text_style: OnwayRegular{font_size: 9.75 letter_spacing: 0}}}
 View{width: 83 height: 19 margin: Inset{left: 46 top: 224.484} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "别出发和到达" draw_text.color: #xffffff59 draw_text.text_style: OnwayRegular{font_size: 9.75 letter_spacing: 0}}}
 RoundedAllView{width: 304 height: 113 margin: Inset{left: 28 top: 275.984} flow: Overlay padding: 0 draw_bg.color: #xffffff0a draw_bg.border_radius: vec4(8, 8, 8, 8) draw_bg.color_dither: 0.0}
-Svg{width: 16 height: 16 margin: Inset{left: 46 top: 300.984} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-014.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 16 height: 16 margin: Inset{left: 46 top: 300.984} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-009.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 69 height: 24 margin: Inset{left: 70 top: 296.391} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "异常通知" draw_text.color: #xffffffff draw_text.text_style: OnwayBold{font_size: 12 letter_spacing: 0}}}
 RoundedView{width: 50 height: 30 margin: Inset{left: 264 top: 293.984} draw_bg.border_radius: 7.5 draw_bg.color: if cfg.anomalyNotice {#x30d158} else {#x444446}}
 RoundedView{width: 26 height: 26 margin: Inset{left: if cfg.anomalyNotice {286} else {266} top: 295.984} draw_bg.border_radius: 6.5 draw_bg.color: #xffffff}
@@ -370,17 +452,22 @@ hit_permissions_0_0 := OnwayHit{width: 50 height: 30 margin: Inset{left: 264 top
 hit_permissions_0_1 := OnwayHit{width: 50 height: 30 margin: Inset{left: 264 top: 293.984} text: "" on_click: || togglePreference(1)}
 }
 }
-View{width: 360 height: 93.188 margin: Inset{left: 0 top: 415.813} flow: Overlay padding: 0 clip_x: true clip_y: true
+View{width: Fill height: 93.188 flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
+View{width: 360 height: 93.188 flow: Overlay padding: 0
 RoundedAllView{width: 304 height: 49.188 margin: Inset{left: 28 top: 16} flow: Overlay padding: 0 draw_bg.color: #x2997ffff draw_bg.border_radius: vec4(8, 8, 8, 8) draw_bg.color_dither: 0.0}
 View{width: 149 height: 24 margin: Inset{left: 108 top: 28} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "完成设置，开始使用" draw_text.color: #xffffffff draw_text.text_style: OnwayBold{font_size: 12 letter_spacing: 0}}}
 hit_permissions_1_0 := OnwayHit{width: 304 height: 49.188 margin: Inset{left: 28 top: 16} text: "" on_click: || finishSetup()}
 }
 }
 }
+}
+}
 elif screen == "ready" {
-RoundedShadowView{width: 360 height: 509 flow: Overlay padding: 0 clip_x: false clip_y: false draw_bg.color: #x272729ff draw_bg.border_radius: 14.0 draw_bg.shadow_radius: 60.0 draw_bg.shadow_offset: vec2(0, 25) draw_bg.shadow_color: #x0000001f
-View{width: 360 height: 429 margin: Inset{left: 0 top: 0} flow: Overlay padding: 0 clip_x: true clip_y: true
-Svg{width: 15 height: 15 margin: Inset{left: 28 top: 32.297} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-015.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+SolidView{width: Fill height: Fill flow: Overlay padding: 0 draw_bg.color: #x272729ff
+View{width: Fill height: Fill flow: Down padding: 0 spacing: 0
+OnwayScroll{width: Fill height: Fill flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
+View{width: 360 height: 430 flow: Overlay padding: 0
+Svg{width: 15 height: 15 margin: Inset{left: 28 top: 32.297} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-010.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 58.203 height: 19 margin: Inset{left: 51 top: 30} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "准备出门" draw_text.color: #xffffff66 draw_text.text_style: OnwayRegular{font_size: 9.75 letter_spacing: 0.3}}}
 View{width: 256.563 height: 49 margin: Inset{left: 28 top: 61.594} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "预计 42 分钟到达" draw_text.color: #xffffffff draw_text.text_style: OnwayBold{font_size: 25.5 letter_spacing: -0.8}}}
 View{width: 95 height: 21 margin: Inset{left: 28 top: 112.984} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "中关村软件园" draw_text.color: #xffffff73 draw_text.text_style: OnwayRegular{font_size: 11.25 letter_spacing: 0}}}
@@ -388,25 +475,45 @@ View{width: 210.172 height: 19 margin: Inset{left: 28 top: 139.484} flow: Overla
 SolidView{width: 304 height: 1 margin: Inset{left: 28 top: 180.984} draw_bg.color: #xffffff14}
 View{width: 57 height: 19 margin: Inset{left: 28 top: 203.578} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "平时耗时" draw_text.color: #xffffff66 draw_text.text_style: OnwayRegular{font_size: 9.75 letter_spacing: 0}}}
 View{width: 68.813 height: 20 margin: Inset{left: 268.188 top: 202.984} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "约 35 分钟" draw_text.color: #xffffffcc draw_text.text_style: OnwayRegular{font_size: 10.5 letter_spacing: 0}}}
-Svg{width: 14 height: 14 margin: Inset{left: 28 top: 236.172} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-016.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 14 height: 14 margin: Inset{left: 28 top: 236.172} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-011.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 145.047 height: 20 margin: Inset{left: 50 top: 232.781} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "今天比平常多约 7 分钟" draw_text.color: #xff9f0aff draw_text.text_style: OnwayRegular{font_size: 10.5 letter_spacing: 0}}}
 View{width: 140.891 height: 26 margin: Inset{left: 28 top: 262.578} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "建议 7:15 前出门" draw_text.color: #x2997ffff draw_text.text_style: OnwayBold{font_size: 13.5 letter_spacing: 0}}}
 View{width: 166.438 height: 16 margin: Inset{left: 28 top: 413.813} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "原型示例 · 非实时数据" draw_text.color: #xffffff33 draw_text.text_style: OnwayRegular{font_size: 8.25 letter_spacing: 0}}}
 
 }
-View{width: 360 height: 80 margin: Inset{left: 0 top: 429} flow: Overlay padding: 0 clip_x: true clip_y: true
+}
+// Advice stays inside the current commute card.
+if aiEnabled && aiCard != nil && aiCard.expires > time_now() && aiCard.stage == screen {
+    View{width: Fill height: 160 flow: Down padding: Inset{left: 28 right: 28 top: 10 bottom: 10}
+        RoundedView{width: Fill height: Fill flow: Down padding: 14 spacing: 6 draw_bg.color: #x2997ff18 draw_bg.border_radius: 10
+            Label{width: Fill text: aiCard.title draw_text.color: #x2997ff draw_text.text_style: OnwayAI{font_size: 12}}
+            OnwayScroll{width: Fill height: Fill flow: Down spacing: 6
+                Label{width: Fill height: Fit text: aiCard.body draw_text.color: if screen == "idle" || screen == "canceled" || screen == "arrived" {#x1d1d1f} else {#xffffff} draw_text.text_style: OnwayAI{font_size: 11}}
+                Label{width: Fill height: Fit text: aiCard.reason draw_text.color: if screen == "idle" || screen == "canceled" || screen == "arrived" {#x666666} else {#xaaaaaa} draw_text.text_style: OnwayAI{font_size: 9}}
+            }
+            MenuButton{height: 26 text: "收起建议" draw_text.text_style: OnwayAI{font_size: 9} on_click: || dismissAI()}
+        }
+    }
+}
+
+View{width: Fill height: 80 flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
+View{width: 360 height: 80 flow: Overlay padding: 0
 RoundedAllView{width: 36 height: 36 margin: Inset{left: 28 top: 16} flow: Overlay padding: 0 draw_bg.color: #xffffff14 draw_bg.border_radius: vec4(25, 25, 25, 25) draw_bg.color_dither: 0.0}
-Svg{width: 18 height: 18 margin: Inset{left: 37 top: 25} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-017.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 18 height: 18 margin: Inset{left: 37 top: 25} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-012.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 98.922 height: 19 margin: Inset{left: 238.078 top: 34.406} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "模拟离家出发 →" draw_text.color: #xffffff40 draw_text.text_style: OnwayRegular{font_size: 9.75 letter_spacing: 0}}}
 hit_ready_1_0 := OnwayHit{width: 36 height: 36 margin: Inset{left: 28 top: 16} text: "" on_click: || openSettings()}
 hit_ready_1_1 := OnwayHit{width: 93.922 height: 15.594 margin: Inset{left: 238.078 top: 36.406} text: "" on_click: || setScreen("walking")}
 }
 }
 }
+}
+}
 elif screen == "walking" {
-RoundedShadowView{width: 360 height: 509 flow: Overlay padding: 0 clip_x: false clip_y: false draw_bg.color: #x272729ff draw_bg.border_radius: 14.0 draw_bg.shadow_radius: 60.0 draw_bg.shadow_offset: vec2(0, 25) draw_bg.shadow_color: #x0000001f
-View{width: 360 height: 429 margin: Inset{left: 0 top: 0} flow: Overlay padding: 0 clip_x: true clip_y: true
-Svg{width: 15 height: 15 margin: Inset{left: 28 top: 32.297} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-018.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+SolidView{width: Fill height: Fill flow: Overlay padding: 0 draw_bg.color: #x272729ff
+View{width: Fill height: Fill flow: Down padding: 0 spacing: 0
+OnwayScroll{width: Fill height: Fill flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
+View{width: 360 height: 430 flow: Overlay padding: 0
+Svg{width: 15 height: 15 margin: Inset{left: 28 top: 32.297} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-013.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 71.5 height: 19 margin: Inset{left: 51 top: 30} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "前往上车站" draw_text.color: #xffffff66 draw_text.text_style: OnwayRegular{font_size: 9.75 letter_spacing: 0.3}}}
 View{width: 204.109 height: 49 margin: Inset{left: 28 top: 61.594} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "步行约 8 分钟" draw_text.color: #xffffffff draw_text.text_style: OnwayBold{font_size: 25.5 letter_spacing: -0.8}}}
 RoundedAllView{width: 304 height: 67.984 margin: Inset{left: 28 top: 116.984} flow: Overlay padding: 0 draw_bg.color: #x2997ff14 draw_bg.border_radius: vec4(7, 7, 7, 7) draw_bg.color_dither: 0.0}
@@ -424,19 +531,39 @@ View{width: 68.813 height: 20 margin: Inset{left: 268.188 top: 311.359} flow: Ov
 View{width: 130.938 height: 16 margin: Inset{left: 28 top: 413.813} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "原型示例 · 非实时数据" draw_text.color: #xffffff33 draw_text.text_style: OnwayRegular{font_size: 8.25 letter_spacing: 0}}}
 
 }
-View{width: 360 height: 80 margin: Inset{left: 0 top: 429} flow: Overlay padding: 0 clip_x: true clip_y: true
+}
+// Advice stays inside the current commute card.
+if aiEnabled && aiCard != nil && aiCard.expires > time_now() && aiCard.stage == screen {
+    View{width: Fill height: 160 flow: Down padding: Inset{left: 28 right: 28 top: 10 bottom: 10}
+        RoundedView{width: Fill height: Fill flow: Down padding: 14 spacing: 6 draw_bg.color: #x2997ff18 draw_bg.border_radius: 10
+            Label{width: Fill text: aiCard.title draw_text.color: #x2997ff draw_text.text_style: OnwayAI{font_size: 12}}
+            OnwayScroll{width: Fill height: Fill flow: Down spacing: 6
+                Label{width: Fill height: Fit text: aiCard.body draw_text.color: if screen == "idle" || screen == "canceled" || screen == "arrived" {#x1d1d1f} else {#xffffff} draw_text.text_style: OnwayAI{font_size: 11}}
+                Label{width: Fill height: Fit text: aiCard.reason draw_text.color: if screen == "idle" || screen == "canceled" || screen == "arrived" {#x666666} else {#xaaaaaa} draw_text.text_style: OnwayAI{font_size: 9}}
+            }
+            MenuButton{height: 26 text: "收起建议" draw_text.text_style: OnwayAI{font_size: 9} on_click: || dismissAI()}
+        }
+    }
+}
+
+View{width: Fill height: 80 flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
+View{width: 360 height: 80 flow: Overlay padding: 0
 RoundedAllView{width: 36 height: 36 margin: Inset{left: 28 top: 16} flow: Overlay padding: 0 draw_bg.color: #xffffff14 draw_bg.border_radius: vec4(25, 25, 25, 25) draw_bg.color_dither: 0.0}
-Svg{width: 18 height: 18 margin: Inset{left: 37 top: 25} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-019.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 18 height: 18 margin: Inset{left: 37 top: 25} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-014.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 98.922 height: 19 margin: Inset{left: 238.078 top: 34.406} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "到达车站候车 →" draw_text.color: #xffffff40 draw_text.text_style: OnwayRegular{font_size: 9.75 letter_spacing: 0}}}
 hit_walking_1_0 := OnwayHit{width: 36 height: 36 margin: Inset{left: 28 top: 16} text: "" on_click: || openSettings()}
 hit_walking_1_1 := OnwayHit{width: 93.922 height: 15.594 margin: Inset{left: 238.078 top: 36.406} text: "" on_click: || setScreen("waiting")}
 }
 }
 }
+}
+}
 elif screen == "waiting" {
-RoundedShadowView{width: 360 height: 509 flow: Overlay padding: 0 clip_x: false clip_y: false draw_bg.color: #x272729ff draw_bg.border_radius: 14.0 draw_bg.shadow_radius: 60.0 draw_bg.shadow_offset: vec2(0, 25) draw_bg.shadow_color: #x0000001f
-View{width: 360 height: 429 margin: Inset{left: 0 top: 0} flow: Overlay padding: 0 clip_x: true clip_y: true
-Svg{width: 15 height: 15 margin: Inset{left: 28 top: 32.297} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-020.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+SolidView{width: Fill height: Fill flow: Overlay padding: 0 draw_bg.color: #x272729ff
+View{width: Fill height: Fill flow: Down padding: 0 spacing: 0
+OnwayScroll{width: Fill height: Fill flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
+View{width: 360 height: 430 flow: Overlay padding: 0
+Svg{width: 15 height: 15 margin: Inset{left: 28 top: 32.297} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-015.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 44.906 height: 19 margin: Inset{left: 51 top: 30} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "候车中" draw_text.color: #xffffff66 draw_text.text_style: OnwayRegular{font_size: 9.75 letter_spacing: 0.3}}}
 View{width: 99.813 height: 35 margin: Inset{left: 28 top: 59.594} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "望京西站" draw_text.color: #xffffffff draw_text.text_style: OnwayBold{font_size: 18 letter_spacing: -0.3}}}
 View{width: 133.375 height: 21 margin: Inset{left: 28 top: 94.391} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "15号线 · 顺义方向" draw_text.color: #x2997ffff draw_text.text_style: OnwayRegular{font_size: 11.25 letter_spacing: 0}}}
@@ -455,9 +582,25 @@ View{width: 32.203 height: 20 margin: Inset{left: 304.797 top: 354.156} flow: Ov
 View{width: 146.859 height: 16 margin: Inset{left: 28 top: 413.813} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "原型示例 · 非实时数据" draw_text.color: #xffffff33 draw_text.text_style: OnwayRegular{font_size: 8.25 letter_spacing: 0}}}
 
 }
-View{width: 360 height: 80 margin: Inset{left: 0 top: 429} flow: Overlay padding: 0 clip_x: true clip_y: true
+}
+// Advice stays inside the current commute card.
+if aiEnabled && aiCard != nil && aiCard.expires > time_now() && aiCard.stage == screen {
+    View{width: Fill height: 160 flow: Down padding: Inset{left: 28 right: 28 top: 10 bottom: 10}
+        RoundedView{width: Fill height: Fill flow: Down padding: 14 spacing: 6 draw_bg.color: #x2997ff18 draw_bg.border_radius: 10
+            Label{width: Fill text: aiCard.title draw_text.color: #x2997ff draw_text.text_style: OnwayAI{font_size: 12}}
+            OnwayScroll{width: Fill height: Fill flow: Down spacing: 6
+                Label{width: Fill height: Fit text: aiCard.body draw_text.color: if screen == "idle" || screen == "canceled" || screen == "arrived" {#x1d1d1f} else {#xffffff} draw_text.text_style: OnwayAI{font_size: 11}}
+                Label{width: Fill height: Fit text: aiCard.reason draw_text.color: if screen == "idle" || screen == "canceled" || screen == "arrived" {#x666666} else {#xaaaaaa} draw_text.text_style: OnwayAI{font_size: 9}}
+            }
+            MenuButton{height: 26 text: "收起建议" draw_text.text_style: OnwayAI{font_size: 9} on_click: || dismissAI()}
+        }
+    }
+}
+
+View{width: Fill height: 80 flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
+View{width: 360 height: 80 flow: Overlay padding: 0
 RoundedAllView{width: 36 height: 36 margin: Inset{left: 28 top: 16} flow: Overlay padding: 0 draw_bg.color: #xffffff14 draw_bg.border_radius: vec4(25, 25, 25, 25) draw_bg.color_dither: 0.0}
-Svg{width: 18 height: 18 margin: Inset{left: 37 top: 25} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-021.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 18 height: 18 margin: Inset{left: 37 top: 25} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-016.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 RoundedAllView{width: 88 height: 33.594 margin: Inset{left: 244 top: 18.406} flow: Overlay padding: 0 draw_bg.color: #xffffff0f draw_bg.border_radius: vec4(7, 7, 7, 7) draw_bg.color_dither: 0.0}
 View{width: 57 height: 19 margin: Inset{left: 262 top: 25.406} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "已经上车" draw_text.color: #xffffff80 draw_text.text_style: OnwayRegular{font_size: 9.75 letter_spacing: 0}}}
 hit_waiting_1_0 := OnwayHit{width: 36 height: 36 margin: Inset{left: 28 top: 16} text: "" on_click: || openSettings()}
@@ -465,11 +608,14 @@ hit_waiting_1_1 := OnwayHit{width: 88 height: 33.594 margin: Inset{left: 244 top
 }
 }
 }
+}
+}
 elif screen == "riding" {
-RoundedShadowView{width: 360 height: 509 flow: Overlay padding: 0 clip_x: false clip_y: false draw_bg.color: #x272729ff draw_bg.border_radius: 14.0 draw_bg.shadow_radius: 60.0 draw_bg.shadow_offset: vec2(0, 25) draw_bg.shadow_color: #x0000001f
-OnwayScroll{width: 360 height: 429 margin: Inset{left: 0 top: 0} flow: Down padding: 0 clip_x: true clip_y: true
+SolidView{width: Fill height: Fill flow: Overlay padding: 0 draw_bg.color: #x272729ff
+View{width: Fill height: Fill flow: Down padding: 0 spacing: 0
+OnwayScroll{width: Fill height: Fill flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
 View{width: 360 height: 454 flow: Overlay padding: 0
-Svg{width: 15 height: 15 margin: Inset{left: 28 top: 32.297} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-022.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 15 height: 15 margin: Inset{left: 28 top: 32.297} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-017.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 44.906 height: 19 margin: Inset{left: 51 top: 30} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "乘车中" draw_text.color: #xffffff66 draw_text.text_style: OnwayRegular{font_size: 9.75 letter_spacing: 0.3}}}
 View{width: 143.156 height: 24 margin: Inset{left: 28 top: 56.594} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "15号线 · 顺义方向" draw_text.color: #x2997ffff draw_text.text_style: OnwayBold{font_size: 12 letter_spacing: 0}}}
 SolidView{width: 2 height: 193.563 margin: Inset{left: 35 top: 106.781} draw_bg.color: #xffffff14}
@@ -499,9 +645,24 @@ View{width: 123.609 height: 16 margin: Inset{left: 28 top: 438.125} flow: Overla
 
 }
 }
-View{width: 360 height: 80 margin: Inset{left: 0 top: 429} flow: Overlay padding: 0 clip_x: true clip_y: true
+// Advice stays inside the current commute card.
+if aiEnabled && aiCard != nil && aiCard.expires > time_now() && aiCard.stage == screen {
+    View{width: Fill height: 160 flow: Down padding: Inset{left: 28 right: 28 top: 10 bottom: 10}
+        RoundedView{width: Fill height: Fill flow: Down padding: 14 spacing: 6 draw_bg.color: #x2997ff18 draw_bg.border_radius: 10
+            Label{width: Fill text: aiCard.title draw_text.color: #x2997ff draw_text.text_style: OnwayAI{font_size: 12}}
+            OnwayScroll{width: Fill height: Fill flow: Down spacing: 6
+                Label{width: Fill height: Fit text: aiCard.body draw_text.color: if screen == "idle" || screen == "canceled" || screen == "arrived" {#x1d1d1f} else {#xffffff} draw_text.text_style: OnwayAI{font_size: 11}}
+                Label{width: Fill height: Fit text: aiCard.reason draw_text.color: if screen == "idle" || screen == "canceled" || screen == "arrived" {#x666666} else {#xaaaaaa} draw_text.text_style: OnwayAI{font_size: 9}}
+            }
+            MenuButton{height: 26 text: "收起建议" draw_text.text_style: OnwayAI{font_size: 9} on_click: || dismissAI()}
+        }
+    }
+}
+
+View{width: Fill height: 80 flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
+View{width: 360 height: 80 flow: Overlay padding: 0
 RoundedAllView{width: 36 height: 36 margin: Inset{left: 28 top: 16} flow: Overlay padding: 0 draw_bg.color: #xffffff14 draw_bg.border_radius: vec4(25, 25, 25, 25) draw_bg.color_dither: 0.0}
-Svg{width: 18 height: 18 margin: Inset{left: 37 top: 25} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-023.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 18 height: 18 margin: Inset{left: 37 top: 25} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-018.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 RoundedAllView{width: 88 height: 33.594 margin: Inset{left: 244 top: 18.406} flow: Overlay padding: 0 draw_bg.color: #xffffff0f draw_bg.border_radius: vec4(7, 7, 7, 7) draw_bg.color_dither: 0.0}
 View{width: 57 height: 19 margin: Inset{left: 262 top: 25.406} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "已经下车" draw_text.color: #xffffff80 draw_text.text_style: OnwayRegular{font_size: 9.75 letter_spacing: 0}}}
 hit_riding_1_0 := OnwayHit{width: 36 height: 36 margin: Inset{left: 28 top: 16} text: "" on_click: || openSettings()}
@@ -509,11 +670,14 @@ hit_riding_1_1 := OnwayHit{width: 88 height: 33.594 margin: Inset{left: 244 top:
 }
 }
 }
+}
+}
 elif screen == "transfer" {
-RoundedShadowView{width: 360 height: 509 flow: Overlay padding: 0 clip_x: false clip_y: false draw_bg.color: #x272729ff draw_bg.border_radius: 14.0 draw_bg.shadow_radius: 60.0 draw_bg.shadow_offset: vec2(0, 25) draw_bg.shadow_color: #x0000001f
-OnwayScroll{width: 360 height: 429 margin: Inset{left: 0 top: 0} flow: Down padding: 0 clip_x: true clip_y: true
+SolidView{width: Fill height: Fill flow: Overlay padding: 0 draw_bg.color: #x272729ff
+View{width: Fill height: Fill flow: Down padding: 0 spacing: 0
+OnwayScroll{width: Fill height: Fill flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
 View{width: 360 height: 432 flow: Overlay padding: 0
-Svg{width: 15 height: 15 margin: Inset{left: 28 top: 32.297} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-024.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 15 height: 15 margin: Inset{left: 28 top: 32.297} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-019.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 44.906 height: 19 margin: Inset{left: 51 top: 30} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "换乘中" draw_text.color: #xffffff66 draw_text.text_style: OnwayRegular{font_size: 9.75 letter_spacing: 0.3}}}
 View{width: 180.406 height: 40 margin: Inset{left: 28 top: 59.594} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "换乘至 13号线" draw_text.color: #xffffffff draw_text.text_style: OnwayBold{font_size: 21 letter_spacing: -0.5}}}
 View{width: 80 height: 21 margin: Inset{left: 28 top: 97.781} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "西直门方向" draw_text.color: #x2997ffff draw_text.text_style: OnwayRegular{font_size: 11.25 letter_spacing: 0}}}
@@ -536,9 +700,24 @@ View{width: 108.938 height: 16 margin: Inset{left: 28 top: 415.953} flow: Overla
 
 }
 }
-View{width: 360 height: 80 margin: Inset{left: 0 top: 429} flow: Overlay padding: 0 clip_x: true clip_y: true
+// Advice stays inside the current commute card.
+if aiEnabled && aiCard != nil && aiCard.expires > time_now() && aiCard.stage == screen {
+    View{width: Fill height: 160 flow: Down padding: Inset{left: 28 right: 28 top: 10 bottom: 10}
+        RoundedView{width: Fill height: Fill flow: Down padding: 14 spacing: 6 draw_bg.color: #x2997ff18 draw_bg.border_radius: 10
+            Label{width: Fill text: aiCard.title draw_text.color: #x2997ff draw_text.text_style: OnwayAI{font_size: 12}}
+            OnwayScroll{width: Fill height: Fill flow: Down spacing: 6
+                Label{width: Fill height: Fit text: aiCard.body draw_text.color: if screen == "idle" || screen == "canceled" || screen == "arrived" {#x1d1d1f} else {#xffffff} draw_text.text_style: OnwayAI{font_size: 11}}
+                Label{width: Fill height: Fit text: aiCard.reason draw_text.color: if screen == "idle" || screen == "canceled" || screen == "arrived" {#x666666} else {#xaaaaaa} draw_text.text_style: OnwayAI{font_size: 9}}
+            }
+            MenuButton{height: 26 text: "收起建议" draw_text.text_style: OnwayAI{font_size: 9} on_click: || dismissAI()}
+        }
+    }
+}
+
+View{width: Fill height: 80 flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
+View{width: 360 height: 80 flow: Overlay padding: 0
 RoundedAllView{width: 36 height: 36 margin: Inset{left: 28 top: 16} flow: Overlay padding: 0 draw_bg.color: #xffffff14 draw_bg.border_radius: vec4(25, 25, 25, 25) draw_bg.color_dither: 0.0}
-Svg{width: 18 height: 18 margin: Inset{left: 37 top: 25} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-025.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 18 height: 18 margin: Inset{left: 37 top: 25} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-020.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 RoundedAllView{width: 88 height: 33.594 margin: Inset{left: 244 top: 18.406} flow: Overlay padding: 0 draw_bg.color: #xffffff0f draw_bg.border_radius: vec4(7, 7, 7, 7) draw_bg.color_dither: 0.0}
 View{width: 57 height: 19 margin: Inset{left: 262 top: 25.406} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "已经上车" draw_text.color: #xffffff80 draw_text.text_style: OnwayRegular{font_size: 9.75 letter_spacing: 0}}}
 hit_transfer_1_0 := OnwayHit{width: 36 height: 36 margin: Inset{left: 28 top: 16} text: "" on_click: || openSettings()}
@@ -546,10 +725,14 @@ hit_transfer_1_1 := OnwayHit{width: 88 height: 33.594 margin: Inset{left: 244 to
 }
 }
 }
+}
+}
 elif screen == "lastwalk" {
-RoundedShadowView{width: 360 height: 509 flow: Overlay padding: 0 clip_x: false clip_y: false draw_bg.color: #x272729ff draw_bg.border_radius: 14.0 draw_bg.shadow_radius: 60.0 draw_bg.shadow_offset: vec2(0, 25) draw_bg.shadow_color: #x0000001f
-View{width: 360 height: 429 margin: Inset{left: 0 top: 0} flow: Overlay padding: 0 clip_x: true clip_y: true
-Svg{width: 15 height: 15 margin: Inset{left: 28 top: 87.406} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-026.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+SolidView{width: Fill height: Fill flow: Overlay padding: 0 draw_bg.color: #x272729ff
+View{width: Fill height: Fill flow: Down padding: 0 spacing: 0
+OnwayScroll{width: Fill height: Fill flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
+View{width: 360 height: 429 flow: Overlay padding: 0
+Svg{width: 15 height: 15 margin: Inset{left: 28 top: 87.406} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-021.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 98.109 height: 19 margin: Inset{left: 51 top: 85.109} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "步行前往目的地" draw_text.color: #xffffff66 draw_text.text_style: OnwayRegular{font_size: 9.75 letter_spacing: 0.3}}}
 View{width: 270.5 height: 49 margin: Inset{left: 28 top: 120.703} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "还需步行约 6 分钟" draw_text.color: #xffffffff draw_text.text_style: OnwayBold{font_size: 25.5 letter_spacing: -0.8}}}
 View{width: 89.484 height: 29 margin: Inset{left: 28 top: 171.094} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "约 450 米" draw_text.color: #x2997ffff draw_text.text_style: OnwayBold{font_size: 15 letter_spacing: 0}}}
@@ -562,26 +745,47 @@ View{width: 51.688 height: 20 margin: Inset{left: 285.313 top: 308.891} flow: Ov
 View{width: 152.938 height: 16 margin: Inset{left: 28 top: 358.688} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "原型示例 · 非实时数据" draw_text.color: #xffffff33 draw_text.text_style: OnwayRegular{font_size: 8.25 letter_spacing: 0}}}
 
 }
-View{width: 360 height: 80 margin: Inset{left: 0 top: 429} flow: Overlay padding: 0 clip_x: true clip_y: true
+}
+// Advice stays inside the current commute card.
+if aiEnabled && aiCard != nil && aiCard.expires > time_now() && aiCard.stage == screen {
+    View{width: Fill height: 160 flow: Down padding: Inset{left: 28 right: 28 top: 10 bottom: 10}
+        RoundedView{width: Fill height: Fill flow: Down padding: 14 spacing: 6 draw_bg.color: #x2997ff18 draw_bg.border_radius: 10
+            Label{width: Fill text: aiCard.title draw_text.color: #x2997ff draw_text.text_style: OnwayAI{font_size: 12}}
+            OnwayScroll{width: Fill height: Fill flow: Down spacing: 6
+                Label{width: Fill height: Fit text: aiCard.body draw_text.color: if screen == "idle" || screen == "canceled" || screen == "arrived" {#x1d1d1f} else {#xffffff} draw_text.text_style: OnwayAI{font_size: 11}}
+                Label{width: Fill height: Fit text: aiCard.reason draw_text.color: if screen == "idle" || screen == "canceled" || screen == "arrived" {#x666666} else {#xaaaaaa} draw_text.text_style: OnwayAI{font_size: 9}}
+            }
+            MenuButton{height: 26 text: "收起建议" draw_text.text_style: OnwayAI{font_size: 9} on_click: || dismissAI()}
+        }
+    }
+}
+
+View{width: Fill height: 80 flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
+View{width: 360 height: 80 flow: Overlay padding: 0
 RoundedAllView{width: 36 height: 36 margin: Inset{left: 28 top: 16} flow: Overlay padding: 0 draw_bg.color: #xffffff14 draw_bg.border_radius: vec4(25, 25, 25, 25) draw_bg.color_dither: 0.0}
-Svg{width: 18 height: 18 margin: Inset{left: 37 top: 25} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-027.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 18 height: 18 margin: Inset{left: 37 top: 25} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-022.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 111.922 height: 19 margin: Inset{left: 225.078 top: 34.406} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "模拟到达目的地 →" draw_text.color: #xffffff40 draw_text.text_style: OnwayRegular{font_size: 9.75 letter_spacing: 0}}}
 hit_lastwalk_1_0 := OnwayHit{width: 36 height: 36 margin: Inset{left: 28 top: 16} text: "" on_click: || openSettings()}
 hit_lastwalk_1_1 := OnwayHit{width: 106.922 height: 15.594 margin: Inset{left: 225.078 top: 36.406} text: "" on_click: || setScreen("arrived")}
 }
 }
 }
+}
+}
 elif screen == "arrived" {
-RoundedShadowView{width: 360 height: 509 flow: Overlay padding: 0 clip_x: false clip_y: false draw_bg.color: #x00000000 draw_bg.border_radius: 14.0 draw_bg.shadow_radius: 60.0 draw_bg.shadow_offset: vec2(0, 25) draw_bg.shadow_color: #x0000001f
-View{width: 360 height: 216 margin: Inset{left: 0 top: 0} flow: Overlay padding: 0 clip_x: true clip_y: true
-Svg{width: 360 height: 216 margin: Inset{left: 0 top: 0} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-028.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+SolidView{width: Fill height: Fill flow: Overlay padding: 0 draw_bg.color: #xffffff
+Svg{width: Fill height: 216 draw_svg.svg: http_resource("{{assets}}/assets/welcome-gradient.svg") draw_svg.preserve_aspect: false}
+View{width: Fill height: Fill flow: Down padding: 0 spacing: 0
+View{width: Fill height: 216 flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
+View{width: 360 height: 216 flow: Overlay padding: 0
 RoundedAllView{width: 56 height: 56 margin: Inset{left: 152 top: 48} flow: Overlay padding: 0 draw_bg.color: #xffffff33 draw_bg.border_radius: vec4(25, 25, 25, 25) draw_bg.color_dither: 0.0}
-Svg{width: 28 height: 28 margin: Inset{left: 166 top: 62} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-029.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 28 height: 28 margin: Inset{left: 166 top: 62} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-023.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 93.5 height: 44 margin: Inset{left: 135.75 top: 118} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "已到达" draw_text.color: #xffffffff draw_text.text_style: OnwayBold{font_size: 22.5 letter_spacing: -0.5}}}
 View{width: 95 height: 21 margin: Inset{left: 135 top: 160} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "中关村软件园" draw_text.color: #xffffffcc draw_text.text_style: OnwayRegular{font_size: 11.25 letter_spacing: 0}}}
 
 }
-OnwayScroll{width: 360 height: 221 margin: Inset{left: 0 top: 216} flow: Down padding: 0 clip_x: true clip_y: true
+}
+OnwayScroll{width: Fill height: Fill flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
 View{width: 360 height: 278 flow: Overlay padding: 0
 SolidView{width: 360 height: 221 margin: Inset{left: 0 top: 0} draw_bg.color: #xffffffff}
 View{width: 53 height: 17 margin: Inset{left: 52 top: 26} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "本次耗时" draw_text.color: #x86868bff draw_text.text_style: OnwayRegular{font_size: 9 letter_spacing: 0}}}
@@ -598,56 +802,94 @@ hit_arrived_1_0 := OnwayHit{width: 304 height: 39.188 margin: Inset{left: 28 top
 hit_arrived_1_1 := OnwayHit{width: 304 height: 34 margin: Inset{left: 28 top: 215.766} text: "" on_click: || setScreen("idle")}
 }
 }
-View{width: 360 height: 72 margin: Inset{left: 0 top: 437} flow: Overlay padding: 0 clip_x: true clip_y: true
+// Advice stays inside the current commute card.
+if aiEnabled && aiCard != nil && aiCard.expires > time_now() && aiCard.stage == screen {
+    View{width: Fill height: 160 flow: Down padding: Inset{left: 28 right: 28 top: 10 bottom: 10}
+        RoundedView{width: Fill height: Fill flow: Down padding: 14 spacing: 6 draw_bg.color: #x2997ff18 draw_bg.border_radius: 10
+            Label{width: Fill text: aiCard.title draw_text.color: #x2997ff draw_text.text_style: OnwayAI{font_size: 12}}
+            OnwayScroll{width: Fill height: Fill flow: Down spacing: 6
+                Label{width: Fill height: Fit text: aiCard.body draw_text.color: if screen == "idle" || screen == "canceled" || screen == "arrived" {#x1d1d1f} else {#xffffff} draw_text.text_style: OnwayAI{font_size: 11}}
+                Label{width: Fill height: Fit text: aiCard.reason draw_text.color: if screen == "idle" || screen == "canceled" || screen == "arrived" {#x666666} else {#xaaaaaa} draw_text.text_style: OnwayAI{font_size: 9}}
+            }
+            MenuButton{height: 26 text: "收起建议" draw_text.text_style: OnwayAI{font_size: 9} on_click: || dismissAI()}
+        }
+    }
+}
+
+View{width: Fill height: 72 flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
+View{width: 360 height: 72 flow: Overlay padding: 0
 RoundedAllView{width: 360 height: 72 margin: Inset{left: 0 top: 0} flow: Overlay padding: 0 draw_bg.color: #xffffffff draw_bg.border_radius: vec4(0.5, 0.5, 14, 14) draw_bg.color_dither: 0.0}
 RoundedAllView{width: 36 height: 36 margin: Inset{left: 28 top: 12} flow: Overlay padding: 0 draw_bg.color: #x0000000d draw_bg.border_radius: vec4(25, 25, 25, 25) draw_bg.color_dither: 0.0}
-Svg{width: 18 height: 18 margin: Inset{left: 37 top: 21} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-030.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 18 height: 18 margin: Inset{left: 37 top: 21} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-024.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 124.813 height: 16 margin: Inset{left: 212.188 top: 32.813} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "07:12 出发 → 07:59 到达" draw_text.color: #x86868bff draw_text.text_style: OnwayRegular{font_size: 8.25 letter_spacing: 0}}}
 hit_arrived_2_0 := OnwayHit{width: 36 height: 36 margin: Inset{left: 28 top: 12} text: "" on_click: || openSettings()}
 }
 }
 }
+}
+}
 elif screen == "idle" {
-RoundedShadowView{width: 360 height: 509 flow: Overlay padding: 0 clip_x: false clip_y: false draw_bg.color: #xffffffff draw_bg.border_radius: 14.0 draw_bg.shadow_radius: 60.0 draw_bg.shadow_offset: vec2(0, 25) draw_bg.shadow_color: #x0000001f
-View{width: 360 height: 429 margin: Inset{left: 0 top: 0} flow: Overlay padding: 0 clip_x: true clip_y: true
+SolidView{width: Fill height: Fill flow: Overlay padding: 0 draw_bg.color: #xffffffff
+View{width: Fill height: Fill flow: Down padding: 0 spacing: 0
+OnwayScroll{width: Fill height: Fill flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
+View{width: 360 height: 429 flow: Overlay padding: 0
 RoundedAllView{width: 56 height: 56 margin: Inset{left: 152 top: 60.609} flow: Overlay padding: 0 draw_bg.color: #xf5f5f7ff draw_bg.border_radius: vec4(25, 25, 25, 25) draw_bg.color_dither: 0.0}
-Svg{width: 24 height: 24 margin: Inset{left: 168 top: 76.609} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-031.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 24 height: 24 margin: Inset{left: 168 top: 76.609} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-025.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 185 height: 29 margin: Inset{left: 90 top: 133.609} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "当前没有通勤记录中" draw_text.color: #x1d1d1fff draw_text.text_style: OnwayBold{font_size: 15 letter_spacing: 0}}}
 View{width: 257 height: 20 margin: Inset{left: 54 top: 169.609} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "系统将在你离开常用起点时自动开始记录" draw_text.color: #x86868bff draw_text.text_style: OnwayRegular{font_size: 10.5 letter_spacing: 0}}}
 SolidView{width: 304 height: 1 margin: Inset{left: 28 top: 223} draw_bg.color: #xe5e5eaff}
 SolidView{width: 304 height: 41 margin: Inset{left: 28 top: 244} draw_bg.color: #x00000000}
 SolidView{width: 304 height: 1 margin: Inset{left: 28 top: 284} draw_bg.color: #xf2f2f7ff}
-Svg{width: 16 height: 16 margin: Inset{left: 28 top: 256} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-032.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 16 height: 16 margin: Inset{left: 28 top: 256} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-026.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 140 height: 21 margin: Inset{left: 54 top: 253} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "查看保存的通勤方案" draw_text.color: #x0066ccff draw_text.text_style: OnwayRegular{font_size: 11.25 letter_spacing: 0}}}
 SolidView{width: 304 height: 41 margin: Inset{left: 28 top: 285} draw_bg.color: #x00000000}
 SolidView{width: 304 height: 1 margin: Inset{left: 28 top: 325} draw_bg.color: #xf2f2f7ff}
-Svg{width: 16 height: 16 margin: Inset{left: 28 top: 297} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-033.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 16 height: 16 margin: Inset{left: 28 top: 297} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-027.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 95 height: 21 margin: Inset{left: 54 top: 294} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "查看通勤历史" draw_text.color: #x0066ccff draw_text.text_style: OnwayRegular{font_size: 11.25 letter_spacing: 0}}}
-Svg{width: 16 height: 16 margin: Inset{left: 28 top: 338} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-034.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 16 height: 16 margin: Inset{left: 28 top: 338} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-028.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 95 height: 21 margin: Inset{left: 54 top: 335} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "补记一次通勤" draw_text.color: #x0066ccff draw_text.text_style: OnwayRegular{font_size: 11.25 letter_spacing: 0}}}
 View{width: 205.75 height: 17 margin: Inset{left: 79.625 top: 384} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "上次通勤：今天 08:05 到达 · 47 分钟" draw_text.color: #xc7c7ccff draw_text.text_style: OnwayRegular{font_size: 9 letter_spacing: 0}}}
 hit_idle_0_0 := OnwayHit{width: 304 height: 41 margin: Inset{left: 28 top: 244} text: "" on_click: || setScreen("plans")}
 hit_idle_0_1 := OnwayHit{width: 304 height: 41 margin: Inset{left: 28 top: 285} text: "" on_click: || openHistory(screen)}
 hit_idle_0_2 := OnwayHit{width: 304 height: 40 margin: Inset{left: 28 top: 326} text: "" on_click: || setScreen("manualtrip")}
 }
-View{width: 360 height: 80 margin: Inset{left: 0 top: 429} flow: Overlay padding: 0 clip_x: true clip_y: true
+}
+// Advice stays inside the current commute card.
+if aiEnabled && aiCard != nil && aiCard.expires > time_now() && aiCard.stage == screen {
+    View{width: Fill height: 160 flow: Down padding: Inset{left: 28 right: 28 top: 10 bottom: 10}
+        RoundedView{width: Fill height: Fill flow: Down padding: 14 spacing: 6 draw_bg.color: #x2997ff18 draw_bg.border_radius: 10
+            Label{width: Fill text: aiCard.title draw_text.color: #x2997ff draw_text.text_style: OnwayAI{font_size: 12}}
+            OnwayScroll{width: Fill height: Fill flow: Down spacing: 6
+                Label{width: Fill height: Fit text: aiCard.body draw_text.color: if screen == "idle" || screen == "canceled" || screen == "arrived" {#x1d1d1f} else {#xffffff} draw_text.text_style: OnwayAI{font_size: 11}}
+                Label{width: Fill height: Fit text: aiCard.reason draw_text.color: if screen == "idle" || screen == "canceled" || screen == "arrived" {#x666666} else {#xaaaaaa} draw_text.text_style: OnwayAI{font_size: 9}}
+            }
+            MenuButton{height: 26 text: "收起建议" draw_text.text_style: OnwayAI{font_size: 9} on_click: || dismissAI()}
+        }
+    }
+}
+
+View{width: Fill height: 80 flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
+View{width: 360 height: 80 flow: Overlay padding: 0
 RoundedAllView{width: 36 height: 36 margin: Inset{left: 28 top: 16} flow: Overlay padding: 0 draw_bg.color: #x0000000a draw_bg.border_radius: vec4(25, 25, 25, 25) draw_bg.color_dither: 0.0}
-Svg{width: 18 height: 18 margin: Inset{left: 37 top: 25} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-035.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 18 height: 18 margin: Inset{left: 37 top: 25} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-029.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 64.938 height: 16 margin: Inset{left: 272.063 top: 36.813} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "在途 Onway" draw_text.color: #xc7c7ccff draw_text.text_style: OnwayRegular{font_size: 8.25 letter_spacing: 0}}}
 hit_idle_1_0 := OnwayHit{width: 36 height: 36 margin: Inset{left: 28 top: 16} text: "" on_click: || openSettings()}
 }
 }
 }
+}
+}
 elif screen == "gpslost" {
-RoundedShadowView{width: 360 height: 509 flow: Overlay padding: 0 clip_x: false clip_y: false draw_bg.color: #x272729ff draw_bg.border_radius: 14.0 draw_bg.shadow_radius: 60.0 draw_bg.shadow_offset: vec2(0, 25) draw_bg.shadow_color: #x0000001f
-OnwayScroll{width: 360 height: 429 margin: Inset{left: 0 top: 0} flow: Down padding: 0 clip_x: true clip_y: true
+SolidView{width: Fill height: Fill flow: Overlay padding: 0 draw_bg.color: #x272729ff
+View{width: Fill height: Fill flow: Down padding: 0 spacing: 0
+OnwayScroll{width: Fill height: Fill flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
 View{width: 360 height: 485 flow: Overlay padding: 0
-Svg{width: 15 height: 15 margin: Inset{left: 28 top: 32.297} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-036.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 15 height: 15 margin: Inset{left: 28 top: 32.297} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-030.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 44.906 height: 19 margin: Inset{left: 51 top: 30} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "乘车中" draw_text.color: #xffffff66 draw_text.text_style: OnwayRegular{font_size: 9.75 letter_spacing: 0.3}}}
 View{width: 143.156 height: 24 margin: Inset{left: 28 top: 56.594} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "15号线 · 顺义方向" draw_text.color: #x2997ffff draw_text.text_style: OnwayBold{font_size: 12 letter_spacing: 0}}}
 RoundedAllView{width: 304 height: 88.688 margin: Inset{left: 28 top: 94.781} flow: Overlay padding: 0 draw_bg.color: #xff9f0a14 draw_bg.border_radius: vec4(0.5, 7, 7, 0.5) draw_bg.color_dither: 0.0}
 SolidView{width: 3 height: 88.688 margin: Inset{left: 28 top: 94.781} draw_bg.color: #xff9f0aff}
-Svg{width: 14 height: 14 margin: Inset{left: 47 top: 110.172} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-037.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 14 height: 14 margin: Inset{left: 47 top: 110.172} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-031.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 89 height: 20 margin: Inset{left: 67 top: 106.781} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "定位暂不可用" draw_text.color: #xff9f0aff draw_text.text_style: OnwayBold{font_size: 10.5 letter_spacing: 0}}}
 View{width: 148 height: 19 margin: Inset{left: 47 top: 129.578} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "信号恢复后自动更新进度" draw_text.color: #xffffff66 draw_text.text_style: OnwayRegular{font_size: 9.75 letter_spacing: 0}}}
 View{width: 110.359 height: 17 margin: Inset{left: 47 top: 153.078} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "最后更新：2 分钟前" draw_text.color: #xffffff40 draw_text.text_style: OnwayRegular{font_size: 9 letter_spacing: 0}}}
@@ -673,9 +915,24 @@ View{width: 174.969 height: 16 margin: Inset{left: 28 top: 468.844} flow: Overla
 
 }
 }
-View{width: 360 height: 80 margin: Inset{left: 0 top: 429} flow: Overlay padding: 0 clip_x: true clip_y: true
+// Advice stays inside the current commute card.
+if aiEnabled && aiCard != nil && aiCard.expires > time_now() && aiCard.stage == screen {
+    View{width: Fill height: 160 flow: Down padding: Inset{left: 28 right: 28 top: 10 bottom: 10}
+        RoundedView{width: Fill height: Fill flow: Down padding: 14 spacing: 6 draw_bg.color: #x2997ff18 draw_bg.border_radius: 10
+            Label{width: Fill text: aiCard.title draw_text.color: #x2997ff draw_text.text_style: OnwayAI{font_size: 12}}
+            OnwayScroll{width: Fill height: Fill flow: Down spacing: 6
+                Label{width: Fill height: Fit text: aiCard.body draw_text.color: if screen == "idle" || screen == "canceled" || screen == "arrived" {#x1d1d1f} else {#xffffff} draw_text.text_style: OnwayAI{font_size: 11}}
+                Label{width: Fill height: Fit text: aiCard.reason draw_text.color: if screen == "idle" || screen == "canceled" || screen == "arrived" {#x666666} else {#xaaaaaa} draw_text.text_style: OnwayAI{font_size: 9}}
+            }
+            MenuButton{height: 26 text: "收起建议" draw_text.text_style: OnwayAI{font_size: 9} on_click: || dismissAI()}
+        }
+    }
+}
+
+View{width: Fill height: 80 flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
+View{width: 360 height: 80 flow: Overlay padding: 0
 RoundedAllView{width: 36 height: 36 margin: Inset{left: 28 top: 16} flow: Overlay padding: 0 draw_bg.color: #xffffff14 draw_bg.border_radius: vec4(25, 25, 25, 25) draw_bg.color_dither: 0.0}
-Svg{width: 18 height: 18 margin: Inset{left: 37 top: 25} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-038.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 18 height: 18 margin: Inset{left: 37 top: 25} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-032.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 RoundedAllView{width: 80 height: 33.594 margin: Inset{left: 252 top: 18.406} flow: Overlay padding: 0 draw_bg.color: #xffffff0f draw_bg.border_radius: vec4(7, 7, 7, 7) draw_bg.color_dither: 0.0}
 View{width: 57 height: 19 margin: Inset{left: 266 top: 25.406} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "已经下车" draw_text.color: #xffffff80 draw_text.text_style: OnwayRegular{font_size: 9.75 letter_spacing: 0}}}
 hit_gpslost_1_0 := OnwayHit{width: 36 height: 36 margin: Inset{left: 28 top: 16} text: "" on_click: || openSettings()}
@@ -683,11 +940,15 @@ hit_gpslost_1_1 := OnwayHit{width: 80 height: 33.594 margin: Inset{left: 252 top
 }
 }
 }
+}
+}
 elif screen == "canceled" {
-RoundedShadowView{width: 360 height: 509 flow: Overlay padding: 0 clip_x: false clip_y: false draw_bg.color: #xffffffff draw_bg.border_radius: 14.0 draw_bg.shadow_radius: 60.0 draw_bg.shadow_offset: vec2(0, 25) draw_bg.shadow_color: #x0000001f
-View{width: 360 height: 429 margin: Inset{left: 0 top: 0} flow: Overlay padding: 0 clip_x: true clip_y: true
+SolidView{width: Fill height: Fill flow: Overlay padding: 0 draw_bg.color: #xffffffff
+View{width: Fill height: Fill flow: Down padding: 0 spacing: 0
+OnwayScroll{width: Fill height: Fill flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
+View{width: 360 height: 429 flow: Overlay padding: 0
 RoundedAllView{width: 56 height: 56 margin: Inset{left: 152 top: 51.219} flow: Overlay padding: 0 draw_bg.color: #xf5f5f7ff draw_bg.border_radius: vec4(25, 25, 25, 25) draw_bg.color_dither: 0.0}
-Svg{width: 24 height: 24 margin: Inset{left: 168 top: 67.219} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-039.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 24 height: 24 margin: Inset{left: 168 top: 67.219} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-033.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 115 height: 32 margin: Inset{left: 125 top: 124.219} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "行程已取消" draw_text.color: #x1d1d1fff draw_text.text_style: OnwayBold{font_size: 16.5 letter_spacing: 0}}}
 View{width: 271 height: 20 margin: Inset{left: 47 top: 164.609} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "你已返回起点范围，本次临时行程已自动取" draw_text.color: #x86868bff draw_text.text_style: OnwayRegular{font_size: 10.5 letter_spacing: 0}}}
 View{width: 19 height: 20 margin: Inset{left: 173 top: 187} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "消" draw_text.color: #x86868bff draw_text.text_style: OnwayRegular{font_size: 10.5 letter_spacing: 0}}}
@@ -700,25 +961,45 @@ View{width: 37 height: 24 margin: Inset{left: 164 top: 373.578} flow: Overlay pa
 hit_canceled_0_0 := OnwayHit{width: 171.141 height: 16.797 margin: Inset{left: 94.422 top: 325.781} text: "" on_click: || setScreen("manualtrip")}
 hit_canceled_0_1 := OnwayHit{width: 243.188 height: 47.188 margin: Inset{left: 58.406 top: 362.578} text: "" on_click: || setScreen("ready")}
 }
-View{width: 360 height: 80 margin: Inset{left: 0 top: 429} flow: Overlay padding: 0 clip_x: true clip_y: true
+}
+// Advice stays inside the current commute card.
+if aiEnabled && aiCard != nil && aiCard.expires > time_now() && aiCard.stage == screen {
+    View{width: Fill height: 160 flow: Down padding: Inset{left: 28 right: 28 top: 10 bottom: 10}
+        RoundedView{width: Fill height: Fill flow: Down padding: 14 spacing: 6 draw_bg.color: #x2997ff18 draw_bg.border_radius: 10
+            Label{width: Fill text: aiCard.title draw_text.color: #x2997ff draw_text.text_style: OnwayAI{font_size: 12}}
+            OnwayScroll{width: Fill height: Fill flow: Down spacing: 6
+                Label{width: Fill height: Fit text: aiCard.body draw_text.color: if screen == "idle" || screen == "canceled" || screen == "arrived" {#x1d1d1f} else {#xffffff} draw_text.text_style: OnwayAI{font_size: 11}}
+                Label{width: Fill height: Fit text: aiCard.reason draw_text.color: if screen == "idle" || screen == "canceled" || screen == "arrived" {#x666666} else {#xaaaaaa} draw_text.text_style: OnwayAI{font_size: 9}}
+            }
+            MenuButton{height: 26 text: "收起建议" draw_text.text_style: OnwayAI{font_size: 9} on_click: || dismissAI()}
+        }
+    }
+}
+
+View{width: Fill height: 80 flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
+View{width: 360 height: 80 flow: Overlay padding: 0
 RoundedAllView{width: 36 height: 36 margin: Inset{left: 28 top: 16} flow: Overlay padding: 0 draw_bg.color: #x0000000a draw_bg.border_radius: vec4(25, 25, 25, 25) draw_bg.color_dither: 0.0}
-Svg{width: 18 height: 18 margin: Inset{left: 37 top: 25} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-040.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 18 height: 18 margin: Inset{left: 37 top: 25} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-034.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 64.938 height: 16 margin: Inset{left: 272.063 top: 36.813} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "在途 Onway" draw_text.color: #xc7c7ccff draw_text.text_style: OnwayRegular{font_size: 8.25 letter_spacing: 0}}}
 hit_canceled_1_0 := OnwayHit{width: 36 height: 36 margin: Inset{left: 28 top: 16} text: "" on_click: || openSettings()}
 }
 }
 }
+}
+}
 elif screen == "better" {
-RoundedShadowView{width: 360 height: 509 flow: Overlay padding: 0 clip_x: false clip_y: false draw_bg.color: #x272729ff draw_bg.border_radius: 14.0 draw_bg.shadow_radius: 60.0 draw_bg.shadow_offset: vec2(0, 25) draw_bg.shadow_color: #x0000001f
-View{width: 360 height: 429 margin: Inset{left: 0 top: 0} flow: Overlay padding: 0 clip_x: true clip_y: true
-Svg{width: 15 height: 15 margin: Inset{left: 28 top: 32.297} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-041.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+SolidView{width: Fill height: Fill flow: Overlay padding: 0 draw_bg.color: #x272729ff
+View{width: Fill height: Fill flow: Down padding: 0 spacing: 0
+OnwayScroll{width: Fill height: Fill flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
+View{width: 360 height: 430 flow: Overlay padding: 0
+Svg{width: 15 height: 15 margin: Inset{left: 28 top: 32.297} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-035.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 58.203 height: 19 margin: Inset{left: 51 top: 30} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "准备出门" draw_text.color: #xffffff66 draw_text.text_style: OnwayRegular{font_size: 9.75 letter_spacing: 0.3}}}
 View{width: 229.031 height: 44 margin: Inset{left: 28 top: 62.594} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "预计 42 分钟到达" draw_text.color: #xffffffff draw_text.text_style: OnwayBold{font_size: 22.5 letter_spacing: -0.5}}}
 View{width: 225.953 height: 20 margin: Inset{left: 28 top: 106.094} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "步行 → 15号线（顺义方向）→ 步行" draw_text.color: #xffffff66 draw_text.text_style: OnwayRegular{font_size: 10.5 letter_spacing: 0}}}
 SolidView{width: 304 height: 1 margin: Inset{left: 28 top: 144.891} draw_bg.color: #xffffff14}
 RoundedAllView{width: 304 height: 172.781 margin: Inset{left: 28 top: 165.891} flow: Overlay padding: 0 draw_bg.color: #x2997ff0f draw_bg.border_radius: vec4(0.5, 8, 8, 0.5) draw_bg.color_dither: 0.0}
 SolidView{width: 3 height: 172.781 margin: Inset{left: 28 top: 165.891} draw_bg.color: #x2997ffff}
-Svg{width: 16 height: 16 margin: Inset{left: 49 top: 182.891} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-042.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 16 height: 16 margin: Inset{left: 49 top: 182.891} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-036.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 95 height: 21 margin: Inset{left: 71 top: 179.891} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "发现更快方案" draw_text.color: #xffffffff draw_text.text_style: OnwayBold{font_size: 11.25 letter_spacing: 0}}}
 View{width: 207.297 height: 19 margin: Inset{left: 49 top: 205.891} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "方案三：步行 → 公交477路 → 步行" draw_text.color: #xffffff80 draw_text.text_style: OnwayRegular{font_size: 9.75 letter_spacing: 0}}}
 View{width: 225.172 height: 21 margin: Inset{left: 49 top: 227.484} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "预计 35 分钟，比当前快约 7 分钟" draw_text.color: #x2997ffff draw_text.text_style: OnwayBold{font_size: 11.25 letter_spacing: 0}}}
@@ -732,43 +1013,62 @@ hit_better_0_0 := OnwayHit{width: 94 height: 36.797 margin: Inset{left: 49 top: 
 hit_better_0_1 := OnwayHit{width: 92 height: 36.797 margin: Inset{left: 153 top: 261.484} text: "" on_click: || {cfg.selectedPlan = 2; save(); setScreen("ready")}}
 hit_better_0_2 := OnwayHit{width: 265 height: 14.391 margin: Inset{left: 49 top: 308.281} text: "" on_click: || setScreen("ready")}
 }
-View{width: 360 height: 80 margin: Inset{left: 0 top: 429} flow: Overlay padding: 0 clip_x: true clip_y: true
+}
+// Advice stays inside the current commute card.
+if aiEnabled && aiCard != nil && aiCard.expires > time_now() && aiCard.stage == screen {
+    View{width: Fill height: 160 flow: Down padding: Inset{left: 28 right: 28 top: 10 bottom: 10}
+        RoundedView{width: Fill height: Fill flow: Down padding: 14 spacing: 6 draw_bg.color: #x2997ff18 draw_bg.border_radius: 10
+            Label{width: Fill text: aiCard.title draw_text.color: #x2997ff draw_text.text_style: OnwayAI{font_size: 12}}
+            OnwayScroll{width: Fill height: Fill flow: Down spacing: 6
+                Label{width: Fill height: Fit text: aiCard.body draw_text.color: if screen == "idle" || screen == "canceled" || screen == "arrived" {#x1d1d1f} else {#xffffff} draw_text.text_style: OnwayAI{font_size: 11}}
+                Label{width: Fill height: Fit text: aiCard.reason draw_text.color: if screen == "idle" || screen == "canceled" || screen == "arrived" {#x666666} else {#xaaaaaa} draw_text.text_style: OnwayAI{font_size: 9}}
+            }
+            MenuButton{height: 26 text: "收起建议" draw_text.text_style: OnwayAI{font_size: 9} on_click: || dismissAI()}
+        }
+    }
+}
+
+View{width: Fill height: 80 flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
+View{width: 360 height: 80 flow: Overlay padding: 0
 RoundedAllView{width: 36 height: 36 margin: Inset{left: 28 top: 16} flow: Overlay padding: 0 draw_bg.color: #xffffff14 draw_bg.border_radius: vec4(25, 25, 25, 25) draw_bg.color_dither: 0.0}
-Svg{width: 18 height: 18 margin: Inset{left: 37 top: 25} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-043.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 18 height: 18 margin: Inset{left: 37 top: 25} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-037.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 83 height: 19 margin: Inset{left: 254 top: 34.406} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "纠正当前状态" draw_text.color: #xffffff40 draw_text.text_style: OnwayRegular{font_size: 9.75 letter_spacing: 0}}}
 hit_better_1_0 := OnwayHit{width: 36 height: 36 margin: Inset{left: 28 top: 16} text: "" on_click: || openSettings()}
 hit_better_1_1 := OnwayHit{width: 78 height: 15.594 margin: Inset{left: 254 top: 36.406} text: "" on_click: || openCorrection()}
 }
 }
 }
+}
+}
 elif screen == "settings" {
-RoundedShadowView{width: 360 height: 509 flow: Overlay padding: 0 clip_x: false clip_y: false draw_bg.color: #x272729ff draw_bg.border_radius: 14.0 draw_bg.shadow_radius: 60.0 draw_bg.shadow_offset: vec2(0, 25) draw_bg.shadow_color: #x0000001f
-OnwayScroll{width: 360 height: 437 margin: Inset{left: 0 top: 0} flow: Down padding: 0 clip_x: true clip_y: true
+SolidView{width: Fill height: Fill flow: Overlay padding: 0 draw_bg.color: #x272729ff
+View{width: Fill height: Fill flow: Down padding: 0 spacing: 0
+OnwayScroll{width: Fill height: Fill flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
 View{width: 360 height: 696 flow: Overlay padding: 0
 View{width: 52.406 height: 35 margin: Inset{left: 24 top: 25.188} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "设置" draw_text.color: #xffffffff draw_text.text_style: OnwayBold{font_size: 18 letter_spacing: -0.3}}}
-Svg{width: 20 height: 20 margin: Inset{left: 312 top: 32} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-044.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 20 height: 20 margin: Inset{left: 312 top: 32} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-038.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 53 height: 16 margin: Inset{left: 24 top: 93.188} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "通勤地点" draw_text.color: #xffffff40 draw_text.text_style: OnwayBold{font_size: 8.25 letter_spacing: 1}}}
 RoundedAllView{width: 312 height: 86.594 margin: Inset{left: 24 top: 116.375} flow: Overlay padding: 0 draw_bg.color: #xffffff0a draw_bg.border_radius: vec4(7, 7, 7, 7) draw_bg.color_dither: 0.0}
-Svg{width: 14 height: 14 margin: Inset{left: 40 top: 130.766} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-045.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 14 height: 14 margin: Inset{left: 40 top: 130.766} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-039.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 19 height: 20 margin: Inset{left: 62 top: 127.375} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "家" draw_text.color: #xffffffcc draw_text.text_style: OnwayRegular{font_size: 10.5 letter_spacing: 0}}}
 View{width: 83 height: 19 margin: Inset{left: 224 top: 127.969} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: cfg.homeName draw_text.color: #xffffff59 draw_text.text_style: OnwayRegular{font_size: 9.75 letter_spacing: 0}}}
-Svg{width: 12 height: 12 margin: Inset{left: 308 top: 131.766} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-046.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 12 height: 12 margin: Inset{left: 308 top: 131.766} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-040.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 SolidView{width: 280 height: 1 margin: Inset{left: 40 top: 159.172} draw_bg.color: #xffffff0a}
-Svg{width: 14 height: 14 margin: Inset{left: 40 top: 174.563} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-047.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 14 height: 14 margin: Inset{left: 40 top: 174.563} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-041.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 47 height: 20 margin: Inset{left: 62 top: 171.172} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "目的地" draw_text.color: #xffffffcc draw_text.text_style: OnwayRegular{font_size: 10.5 letter_spacing: 0}}}
 View{width: 83 height: 19 margin: Inset{left: 224 top: 171.766} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: cfg.workName draw_text.color: #xffffff59 draw_text.text_style: OnwayRegular{font_size: 9.75 letter_spacing: 0}}}
-Svg{width: 12 height: 12 margin: Inset{left: 308 top: 175.563} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-048.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 12 height: 12 margin: Inset{left: 308 top: 175.563} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-042.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 53 height: 16 margin: Inset{left: 24 top: 220.969} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "通勤方案" draw_text.color: #xffffff40 draw_text.text_style: OnwayBold{font_size: 8.25 letter_spacing: 1}}}
 RoundedAllView{width: 312 height: 130.391 margin: Inset{left: 24 top: 244.156} flow: Overlay padding: 0 draw_bg.color: #xffffff0a draw_bg.border_radius: vec4(7, 7, 7, 7) draw_bg.color_dither: 0.0}
 View{width: 61 height: 20 margin: Inset{left: 40 top: 255.156} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "去程方案" draw_text.color: #xffffffcc draw_text.text_style: OnwayRegular{font_size: 10.5 letter_spacing: 0}}}
 RoundedAllView{width: 7 height: 7 margin: Inset{left: 222.563 top: 262.047} flow: Overlay padding: 0 draw_bg.color: #x30d158ff draw_bg.border_radius: vec4(25, 25, 25, 25) draw_bg.color_dither: 0.0}
 View{width: 71.438 height: 19 margin: Inset{left: 235.563 top: 255.75} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "15号线直达" draw_text.color: #xffffff59 draw_text.text_style: OnwayRegular{font_size: 9.75 letter_spacing: 0}}}
-Svg{width: 12 height: 12 margin: Inset{left: 308 top: 259.547} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-049.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 12 height: 12 margin: Inset{left: 308 top: 259.547} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-043.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 SolidView{width: 280 height: 1 margin: Inset{left: 40 top: 286.953} draw_bg.color: #xffffff0a}
 View{width: 61 height: 20 margin: Inset{left: 40 top: 298.953} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "返程方案" draw_text.color: #xffffffcc draw_text.text_style: OnwayRegular{font_size: 10.5 letter_spacing: 0}}}
 RoundedAllView{width: 7 height: 7 margin: Inset{left: 250 top: 305.844} flow: Overlay padding: 0 draw_bg.color: #x30d158ff draw_bg.border_radius: vec4(25, 25, 25, 25) draw_bg.color_dither: 0.0}
 View{width: 44 height: 19 margin: Inset{left: 263 top: 299.547} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "已保存" draw_text.color: #xffffff59 draw_text.text_style: OnwayRegular{font_size: 9.75 letter_spacing: 0}}}
-Svg{width: 12 height: 12 margin: Inset{left: 308 top: 303.344} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-050.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 12 height: 12 margin: Inset{left: 308 top: 303.344} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-044.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 SolidView{width: 280 height: 1 margin: Inset{left: 40 top: 330.75} draw_bg.color: #xffffff0a}
 View{width: 89 height: 20 margin: Inset{left: 40 top: 342.75} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "重新规划方案" draw_text.color: #x2997ffff draw_text.text_style: OnwayRegular{font_size: 10.5 letter_spacing: 0}}}
 View{width: 65 height: 16 margin: Inset{left: 24 top: 392.547} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "权限与通知" draw_text.color: #xffffff40 draw_text.text_style: OnwayBold{font_size: 8.25 letter_spacing: 1}}}
@@ -783,11 +1083,11 @@ RoundedView{width: 22 height: 22 margin: Inset{left: if cfg.anomalyNotice {296} 
 SolidView{width: 280 height: 1 margin: Inset{left: 40 top: 520.734} draw_bg.color: #xffffff0a}
 View{width: 61 height: 20 margin: Inset{left: 40 top: 532.734} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "通知阈值" draw_text.color: #xffffffcc draw_text.text_style: OnwayRegular{font_size: 10.5 letter_spacing: 0}}}
 View{width: 90.266 height: 19 margin: Inset{left: 216.734 top: 533.328} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "延误 ≥" + cfg.threshold + " 分钟" draw_text.color: #xffffff59 draw_text.text_style: OnwayRegular{font_size: 9.75 letter_spacing: 0}}}
-Svg{width: 12 height: 12 margin: Inset{left: 308 top: 537.125} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-051.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 12 height: 12 margin: Inset{left: 308 top: 537.125} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-045.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 29 height: 16 margin: Inset{left: 24 top: 582.531} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "数据" draw_text.color: #xffffff40 draw_text.text_style: OnwayBold{font_size: 8.25 letter_spacing: 1}}}
 RoundedAllView{width: 312 height: 86.594 margin: Inset{left: 24 top: 605.719} flow: Overlay padding: 0 draw_bg.color: #xffffff0a draw_bg.border_radius: vec4(7, 7, 7, 7) draw_bg.color_dither: 0.0}
 View{width: 61 height: 20 margin: Inset{left: 40 top: 616.719} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "通勤历史" draw_text.color: #xffffffcc draw_text.text_style: OnwayRegular{font_size: 10.5 letter_spacing: 0}}}
-Svg{width: 12 height: 12 margin: Inset{left: 308 top: 621.109} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-052.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 12 height: 12 margin: Inset{left: 308 top: 621.109} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-046.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 SolidView{width: 280 height: 1 margin: Inset{left: 40 top: 648.516} draw_bg.color: #xffffff0a}
 View{width: 89 height: 20 margin: Inset{left: 40 top: 660.516} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "清除历史数据" draw_text.color: #xff453aff draw_text.text_style: OnwayRegular{font_size: 10.5 letter_spacing: 0}}}
 hit_settings_0_0 := OnwayHit{width: 28 height: 31.188 margin: Inset{left: 308 top: 28} text: "" on_click: || closeOverlay()}
@@ -804,22 +1104,32 @@ hit_settings_0_10 := OnwayHit{width: 312 height: 42.797 margin: Inset{left: 24 t
 hit_settings_0_11 := OnwayHit{width: 312 height: 42.797 margin: Inset{left: 24 top: 605.719} text: "" on_click: || openHistory(screen)}
 hit_settings_0_12 := OnwayHit{width: 312 height: 42.797 margin: Inset{left: 24 top: 649.516} text: "" on_click: || setScreen("clearconfirm")}
 }
+View{width: 304 height: Fit flow: Down spacing: 10 padding: Inset{top: 14 bottom: 18}
+Label{text: "智能通勤" draw_text.color: #xffffff draw_text.text_style: OnwayAI{font_size: 12}}
+Label{width: Fill height: Fit text: "结合地点名称、偏好与最近30条历史，在通勤卡片里提供建议。开启后由 MiniMax 分析这些数据。" draw_text.color: #xaaaaaa draw_text.text_style: OnwayAI{font_size: 10}}
+ai_status := Label{width: Fill height: 32 text: aiNote draw_text.color: #xaaaaaa draw_text.text_style: OnwayAI{font_size: 10}}
+MenuButton{text: if aiEnabled {"智能通勤 · 已开启"} else {"智能通勤 · 已关闭"} draw_text.text_style: OnwayAI{font_size: 11} on_click: || toggleAI()}
 }
-View{width: 360 height: 72 margin: Inset{left: 0 top: 437} flow: Overlay padding: 0 clip_x: true clip_y: true
+}
+View{width: Fill height: 72 flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
+View{width: 360 height: 72 flow: Overlay padding: 0
 RoundedAllView{width: 36 height: 36 margin: Inset{left: 24 top: 12} flow: Overlay padding: 0 draw_bg.color: #xffffff1f draw_bg.border_radius: vec4(25, 25, 25, 25) draw_bg.color_dither: 0.0}
-Svg{width: 18 height: 18 margin: Inset{left: 33 top: 21} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-053.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 18 height: 18 margin: Inset{left: 33 top: 21} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-047.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 97.563 height: 16 margin: Inset{left: 243.438 top: 32.813} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "在途 Onway v0.1.0" draw_text.color: #xffffff26 draw_text.text_style: OnwayRegular{font_size: 8.25 letter_spacing: 0}}}
 hit_settings_1_0 := OnwayHit{width: 36 height: 36 margin: Inset{left: 24 top: 12} text: "" on_click: || openSettings()}
 }
 }
 }
+}
+}
 elif screen == "history" {
-RoundedShadowView{width: 360 height: 509 flow: Overlay padding: 0 clip_x: false clip_y: false draw_bg.color: #x272729ff draw_bg.border_radius: 14.0 draw_bg.shadow_radius: 60.0 draw_bg.shadow_offset: vec2(0, 25) draw_bg.shadow_color: #x0000001f
+SolidView{width: Fill height: Fill flow: Overlay padding: 0 draw_bg.color: #x272729ff
 if historyEdited {View{width: Fill height: Fill flow: Down padding: 24 spacing: 18 View{width: Fill height: 32 flow: Right MenuTitle{text: "通勤历史"} View{width: Fill} MenuButton{width: 32 height: 32 text: "×" on_click: || closeOverlay()}} Label{text: "平均耗时 " + historyAverage() + " 分钟 · 共 " + hist.len() + " 次记录" draw_text.color: #xffffff draw_text.text_style: OnwayRegular{font_size: 10.5}} OnwayScroll{width: Fill height: Fill flow: Down spacing: 12 if hist.len()==0 {Label{text: "暂无通勤记录" draw_text.color: #xffffff66 draw_text.text_style: OnwayRegular{font_size: 12}}} for trip in hist {RoundedView{width: Fill height: 72 flow: Down padding: 14 spacing: 6 draw_bg.color: #xffffff08 draw_bg.border_radius: 7.0 Label{text: "去程 · " + trip.durMin + " 分钟" draw_text.color: #xffffff draw_text.text_style: OnwayBold{font_size: 11.25}} Label{text: "手动补记 · 方案 " + (trip.plan+1) draw_text.color: #xffffff66 draw_text.text_style: OnwayRegular{font_size: 9}}}}} Label{text: "仅统计你的已保存记录" draw_text.color: #xffffff40 draw_text.text_style: OnwayRegular{font_size: 8.25}}}} else {
-OnwayScroll{width: 360 height: 437 margin: Inset{left: 0 top: 0} flow: Down padding: 0 clip_x: true clip_y: true
+View{width: Fill height: Fill flow: Down padding: 0 spacing: 0
+OnwayScroll{width: Fill height: Fill flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
 View{width: 360 height: 594 flow: Overlay padding: 0
 View{width: 99.813 height: 35 margin: Inset{left: 24 top: 25.188} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "通勤历史" draw_text.color: #xffffffff draw_text.text_style: OnwayBold{font_size: 18 letter_spacing: -0.3}}}
-Svg{width: 20 height: 20 margin: Inset{left: 312 top: 32} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-054.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 20 height: 20 margin: Inset{left: 312 top: 32} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-048.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 49 height: 16 margin: Inset{left: 54 top: 87.188} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "平均耗时" draw_text.color: #xffffff4d draw_text.text_style: OnwayRegular{font_size: 8.25 letter_spacing: 0}}}
 View{width: 30.328 height: 26 margin: Inset{left: 57.328 top: 103.375} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "38 " draw_text.color: #xffffffff draw_text.text_style: OnwayBold{font_size: 13.5 letter_spacing: 0}}}
 View{width: 17 height: 17 margin: Inset{left: 82.656 top: 110.375} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "分" draw_text.color: #xffffff80 draw_text.text_style: OnwayRegular{font_size: 9 letter_spacing: 0}}}
@@ -878,16 +1188,19 @@ View{width: 135.719 height: 17 margin: Inset{left: 24 top: 557.891} flow: Overla
 hit_history_0_0 := OnwayHit{width: 28 height: 31.188 margin: Inset{left: 308 top: 28} text: "" on_click: || closeOverlay()}
 }
 }
-View{width: 360 height: 72 margin: Inset{left: 0 top: 437} flow: Overlay padding: 0 clip_x: true clip_y: true
+View{width: Fill height: 72 flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true
+View{width: 360 height: 72 flow: Overlay padding: 0
 RoundedAllView{width: 36 height: 36 margin: Inset{left: 24 top: 12} flow: Overlay padding: 0 draw_bg.color: #xffffff14 draw_bg.border_radius: vec4(25, 25, 25, 25) draw_bg.color_dither: 0.0}
-Svg{width: 18 height: 18 margin: Inset{left: 33 top: 21} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-055.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
+Svg{width: 18 height: 18 margin: Inset{left: 33 top: 21} animating: false draw_svg.svg: http_resource("{{assets}}/assets/prototype-049.svg") draw_svg.preserve_viewbox: true draw_svg.preserve_aspect: false}
 View{width: 93.047 height: 16 margin: Inset{left: 247.953 top: 32.813} flow: Overlay padding: 0 clip_x: false clip_y: false Label{width: Fill height: Fill padding: 0 clip_x: false clip_y: false align: Align{x: 0 y: 0.5} text: "基于 8 次有效记录" draw_text.color: #xffffff26 draw_text.text_style: OnwayRegular{font_size: 8.25 letter_spacing: 0}}}
 hit_history_1_0 := OnwayHit{width: 36 height: 36 margin: Inset{left: 24 top: 12} text: "" on_click: || openSettings()}
 }
 }
 }
 }
-else {RoundedView{width: 360 height: 509 flow: Down padding: 28 spacing: 10 draw_bg.color: #x272729 draw_bg.border_radius: 14.0
+}
+}
+else {SolidView{width: Fill height: Fill flow: Down padding: 28 spacing: 10 draw_bg.color: #x272729
 if screen == "navigation" {MenuTitle{text: "在途 · 页面导航"} Label{text: "原型预览 · 路线与班次为示例" draw_text.color: #x99999b draw_text.text_style: OnwayRegular{font_size: 9.75}} OnwayScroll{width: Fill height: Fill flow: Down spacing: 8
 MenuButton{text: "01  欢迎" on_click: || setScreen("welcome")}
 MenuButton{text: "02  标记地点" on_click: || setScreen("locations")}

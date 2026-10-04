@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { chromium } = require('playwright');
 const root = __dirname;
-const designs = path.join(root, 'prototypes');
+const designs = path.resolve(root, process.env.ONWAY_PROTOTYPES || 'prototypes');
 const bundle = path.join(root, 'bundle');
 const debug = path.join(root, '_debug/prototype-native');
 fs.mkdirSync(debug, { recursive: true });
@@ -196,23 +196,37 @@ fn save`);
  controller+=`\nlet editorHome = true\nlet editorBack = "locations"\nlet editorText = ""\nlet manualMinutes = "47"\nlet notice = ""\nfn editLocation(home){editorHome=home; editorBack=screen; if home {editorText=cfg.homeName} else {editorText=cfg.workName}; setScreen("locationeditor")}\nfn saveLocation(){if editorText.trim().len()>0 {if editorHome {cfg.homeName=editorText} else {cfg.workName=editorText}; save(); setScreen(editorBack)}}\nfn selectPlan(i){cfg.selectedPlan=i;save();ui.board.render()}\nfn togglePreference(i){if i==0 {cfg.backgroundLocation = cfg.backgroundLocation == false} else {cfg.anomalyNotice = cfg.anomalyNotice == false};save();ui.board.render()}\nfn setThreshold(n){cfg.threshold=n;save();setScreen("settings")}\nfn openCorrection(){previousScreen=screen;setScreen("correction")}\nfn clearHistory(){hist=[];cfg.historyEdited=true;save();setScreen("history")}\nfn manualTrip(){let d=manualMinutes.trim().to_f64(); if d>=1 && d<=1440 {hist.push({epoch:time_now(),direction:"to_work",plan:cfg.selectedPlan,durMin:round(d)});cfg.historyEdited=true;save();setScreen("history")} else {notice="请输入 1～1440 分钟";ui.board.render()}}\nfn historyAverage(){let total=0;for trip in hist {total=total+trip.durMin};if hist.len()>0 {return round(total/hist.len())};return 0}\n`;
  controller=controller.replaceAll('cfg.historyEdited=true','historyEdited=true;fs.write("history-edited.txt","true")');
  const styles=`\nlet OnwayRegular = TextStyle{font_family: FontFamily{latin := FontMember{res: http_resource("{{assets}}/assets/NotoSansSC-Onway-Regular.ttf") asc: -0.2 desc: 0.08 weight: 400}} line_spacing: 1.0}\nlet OnwayBold = TextStyle{font_family: FontFamily{latin := FontMember{res: http_resource("{{assets}}/assets/NotoSansSC-Onway-Bold.ttf") asc: -0.2 desc: 0.08 weight: 700}} line_spacing: 1.0}\nlet Hit = ButtonFlat{padding: 0 draw_bg +: {color: #x00000000 color_hover: #x00000000 color_down: #x00000008 border_size: 0.0} draw_text.color: #x00000000}\nlet MenuButton = ButtonFlat{width: Fill height: 40 draw_bg +: {color: #x303033 color_hover: #x38383a color_down: #x0066cc border_radius: 7.0 border_size: 0.0} draw_text +: {color: #xffffffff color_hover: #xffffffff color_down: #xffffffff text_style: OnwayRegular{font_size: 10.5}}}\nlet MenuTitle = Label{draw_text.color: #xffffff draw_text.text_style: OnwayBold{font_size: 18}}\n`;
- let body=`SolidView{width: Fill height: Fill flow: Down align: Align{x: 0.5 y: 0.5} padding: 20 draw_bg.color: #xf5f5f7\nboard := View{width: 360 height: Fit flow: Down spacing: 16 on_render: || {\n View{width: Fill height: 18 flow: Right align: Align{x: 0.5 y: 0.5}\n ButtonFlat{text: "‹  返回导航" width: Fit height: 18 padding: 0 draw_bg +: {color: #x00000000 color_hover: #x00000000 color_down: #x00000000 border_size: 0.0} draw_text +: {color: #x86868b color_hover: #x0066cc text_style: OnwayRegular{font_size: 9.75}} on_click: || setScreen("navigation")}\n}\n`;
+ let body=`SolidView{width: Fill height: Fill flow: Overlay padding: 0 draw_bg.color: #x272729\nboard := View{width: Fill height: Fill flow: Down spacing: 0 on_render: || {\nif devNavigation {View{width: Fill height: 18 flow: Right ButtonFlat{text: "‹  返回导航" height: 18 on_click: || setScreen("navigation")}}}\n`;
  layouts.forEach((layout,pi)=>{
-  body+=`${pi===0?'if':'elif'} screen == ${q(names[pi])} {\nRoundedShadowView{width: 360 height: 509 flow: Overlay padding: 0 clip_x: false clip_y: false draw_bg.color: ${layout.gradient?'#x0055b3':color(layout.background)} draw_bg.border_radius: 14.0 draw_bg.shadow_radius: 60.0 draw_bg.shadow_offset: vec2(0, 25) draw_bg.shadow_color: #x0000001f\n`;
+  if(pi===0){body+='if screen == "welcome" {\n'+fs.readFileSync(path.join(root,'welcome.splash'),'utf8')+'\n}\n';return;}
+  body+=`elif screen == ${q(names[pi])} {\nSolidView{width: Fill height: Fill flow: Overlay padding: 0 draw_bg.color: ${pi===10?'#xffffff':layout.gradient?'#x0055b3':color(layout.background)}\n`;
   if(pi===16)body+=`if cfg.historyEdited == true {View{width: Fill height: Fill flow: Down padding: 24 spacing: 18 View{width: Fill height: 32 flow: Right MenuTitle{text: "通勤历史"} View{width: Fill} MenuButton{width: 32 height: 32 text: "×" on_click: || closeOverlay()}} Label{text: "平均耗时 " + historyAverage() + " 分钟 · 共 " + hist.len() + " 次记录" draw_text.color: #xffffff draw_text.text_style: OnwayRegular{font_size: 10.5}} ScrollYView{width: Fill height: Fill flow: Down spacing: 12 if hist.len()==0 {Label{text: "暂无通勤记录" draw_text.color: #xffffff66 draw_text.text_style: OnwayRegular{font_size: 12}}} for trip in hist {RoundedView{width: Fill height: 72 flow: Down padding: 14 spacing: 6 draw_bg.color: #xffffff08 draw_bg.border_radius: 7.0 Label{text: "去程 · " + trip.durMin + " 分钟" draw_text.color: #xffffff draw_text.text_style: OnwayBold{font_size: 11.25}} Label{text: "手动补记 · 方案 " + (trip.plan+1) draw_text.color: #xffffff66 draw_text.text_style: OnwayRegular{font_size: 9}}}} Label{text: "仅统计你的已保存记录" draw_text.color: #xffffff40 draw_text.text_style: OnwayRegular{font_size: 8.25}}}} else {\n`;
-  if(layout.gradient){body+=surface({r:{x:0,y:0,w:360,h:509},bg:'rgb(0,85,179)',gradient:true,radii:[28,28,28,28],borders:Array(4).fill({width:0,color:'transparent'}),opacity:1,class:''})+'\n';}
+  if(layout.gradient){body+='Svg{width: Fill height: Fill draw_svg.svg: http_resource("{{assets}}/assets/welcome-gradient.svg") draw_svg.preserve_aspect: false}\n';}
+  if(pi===10){body+='Svg{width: Fill height: 216 draw_svg.svg: http_resource("{{assets}}/assets/welcome-gradient.svg") draw_svg.preserve_aspect: false}\n';}
+  body+='View{width: Fill height: Fill flow: Down padding: 0 spacing: 0\n';
   for(const p of layout.parts){
-   const wrap=p.scroll?'ScrollYView':'View';
-   body+=`${wrap}{${pos(p.r)} flow: ${p.scroll?'Down':'Overlay'} padding: 0 clip_x: true clip_y: true\n`;
-   if(p.scroll)body+=`View{width: ${num(p.r.w)} height: ${num(p.height)} flow: Overlay padding: 0\n`;
+   const partIndex=layout.parts.indexOf(p), footer=partIndex===layout.parts.length-1;
+   const expanding=!footer && (partIndex>0 || layout.parts.length===2);
+   const wrap=footer||!expanding?'View':'ScrollYView';
+   if(footer && pi>=4 && pi<=14){body+=fs.readFileSync(path.join(root,'ai-ui.splash'),'utf8')+'\n';}
+   body+=`${wrap}{width: Fill height: ${expanding?'Fill':num(p.r.h)} flow: Down align: Align{x: 0.5} padding: 0 clip_x: true clip_y: true\n`;
+   body+=`View{width: ${num(p.r.w)} height: ${num(p.height)} flow: Overlay padding: 0\n`;
    for(const node of p.nodes)if(node.type==='text'&&/^(路线数据|到站数据|步行估算|换乘数据|距离基于|进度基于)/.test(node.text))node.role='data-source';
-   body+=paint(p.nodes)+'\n'+hits(p.hit,names[pi],layout.parts.indexOf(p))+'\n';
-   if(p.scroll)body+='}\n';body+='}\n';
+   body+=paint(pi===10&&partIndex===0?p.nodes.filter(n=>!n.gradient):p.nodes)+'\n'+hits(p.hit,names[pi],layout.parts.indexOf(p))+'\n';
+   body+='}\n';
+   if(pi===15 && partIndex===0){body+=`View{width: 304 height: Fit flow: Down spacing: 10 padding: Inset{top: 14 bottom: 18}
+Label{text: "智能通勤" draw_text.color: #xffffff draw_text.text_style: OnwayAI{font_size: 12}}
+Label{width: Fill height: Fit text: "结合地点名称、偏好与最近30条历史，在通勤卡片里提供建议。开启后由 MiniMax 分析这些数据。" draw_text.color: #xaaaaaa draw_text.text_style: OnwayAI{font_size: 10}}
+ai_status := Label{width: Fill height: 32 text: aiNote draw_text.color: #xaaaaaa draw_text.text_style: OnwayAI{font_size: 10}}
+MenuButton{text: if aiEnabled {"智能通勤 · 已开启"} else {"智能通勤 · 已关闭"} draw_text.text_style: OnwayAI{font_size: 11} on_click: || toggleAI()}
+}\n`;}
+   body+='}\n';
   }
+  body+='}\n';
   if(pi===16)body+='}\n';
   body+='}\n}\n';
  });
- body+=`else {RoundedView{width: 360 height: 509 flow: Down padding: 28 spacing: 10 draw_bg.color: #x272729 draw_bg.border_radius: 14.0\n`;
+ body+=`else {SolidView{width: Fill height: Fill flow: Down padding: 28 spacing: 10 draw_bg.color: #x272729\n`;
  body+=`if screen == "navigation" {MenuTitle{text: "在途 · 页面导航"} Label{text: "原型预览 · 路线与班次为示例" draw_text.color: #x99999b draw_text.text_style: OnwayRegular{font_size: 9.75}} ScrollYView{width: Fill height: Fill flow: Down spacing: 8\n`;
  const titles=['欢迎','标记地点','选择方案','完善设置','准备出门','前往上车站','候车中','乘车中','换乘中','步行前往目的地','已到达','当前无行程','定位丢失','行程已取消','更快方案','设置','通勤历史'];
  titles.forEach((t,i)=>body+=`MenuButton{text: ${q(String(i+1).padStart(2,'0')+'  '+t)} on_click: || setScreen(${q(names[i])})}\n`);
@@ -232,7 +246,7 @@ fn save`);
  body=body.replace('draw_bg.shadow_color: #x0000001f','draw_bg.shadow_color: #x0050b433');
  body=body.replaceAll('ScrollYView{','OnwayScroll{');
  const scrollStyle='\nlet OnwayScroll = ScrollYView{scroll_bars.scroll_bar_y.draw_bg.color: #x00000000 scroll_bars.scroll_bar_y.draw_bg.color_hover: #x00000000 scroll_bars.scroll_bar_y.draw_bg.color_drag: #x00000000 scroll_bars.scroll_bar_y.draw_bg.border_color: #x00000000 scroll_bars.scroll_bar_y.draw_bg.border_color_hover: #x00000000 scroll_bars.scroll_bar_y.draw_bg.border_color_drag: #x00000000}\n';
- const source = controller + finalStyles + scrollStyle + body;
+ const source = require('./integrate-ai.cjs')(controller + finalStyles + scrollStyle + body);
  let depth=0;
  for(const line of source.split('\n')) {const unquoted=line.replace(/"(?:\\.|[^"\\])*"/g,'').replace(/\/\/.*$/,'');depth+=(unquoted.match(/\{/g)||[]).length-(unquoted.match(/\}/g)||[]).length;if(depth<0)throw Error('Unbalanced native widget source');}
  if(depth!==0)throw Error('Unbalanced native widget source');
