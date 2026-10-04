@@ -33,6 +33,8 @@ let local_places = [
 let preferences = ["怕冷", "怕热", "关注紫外线", "关注降雨"]
 let custom_tag = ""
 let family_cities = []
+let wardrobe = []
+let schedule = []
 let reminders_on = true
 let current_weather = nil
 let city_results = []
@@ -41,9 +43,17 @@ let search_status = "输入城市名搜索"
 let app_status = ""
 let chat_messages = []
 let question_text = ""
+let schedule_title = ""
+let schedule_start = ""
+let schedule_end = ""
+let pending_event = nil
+let create_schedule_mode = false
+let advice_text = "天气加载后，Daycast 会结合你的衣橱和日程给出建议。"
+let advice_generation = 0
+let qa_generation = 0
 
 fn save_data(){
-    fs.write("weather.json", {current_city: current_city, cities: cities, preferences: preferences, family_cities: family_cities, reminders_on: reminders_on, current_weather: current_weather}.to_json())
+    fs.write("weather.json", {current_city: current_city, cities: cities, preferences: preferences, family_cities: family_cities, wardrobe: wardrobe, schedule: schedule, reminders_on: reminders_on, current_weather: current_weather}.to_json())
 }
 fn load_data(){
     if fs.exists("weather.json") {
@@ -53,6 +63,8 @@ fn load_data(){
             if stored.cities != nil { cities = stored.cities }
             if stored.preferences != nil { preferences = stored.preferences }
             if stored.family_cities != nil { family_cities = stored.family_cities }
+            if stored.wardrobe != nil { wardrobe = stored.wardrobe }
+            if stored.schedule != nil { schedule = stored.schedule }
             if stored.reminders_on != nil { reminders_on = stored.reminders_on }
             if stored.to_json().search("\"current_weather\"") >= 0 && stored.current_weather != nil { current_weather = stored.current_weather }
         }
@@ -61,7 +73,7 @@ fn load_data(){
     refresh_weather()
     ui.content.render()
 }
-fn goto(target){ page = target ui.content.render() }
+fn goto(target){ page = target if target != "qa" { create_schedule_mode = false } ui.content.render() }
 fn handle_weather_response(response){
     if response.status_code >= 400 { app_status = "天气服务暂时不可用（" + ("" + response.status_code) + "）" ui.content.render() return }
     let data = response.body.to_string().parse_json()
@@ -69,12 +81,13 @@ fn handle_weather_response(response){
     current_weather = data
     app_status = ""
     save_data()
+    request_outing_advice()
     ui.content.render()
 }
 fn refresh_weather(){
     app_status = "正在更新天气…"
     ui.content.render()
-    let url = "https://api.open-meteo.com/v1/forecast?latitude=" + ("" + current_city.latitude) + "&longitude=" + ("" + current_city.longitude) + "&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,weather_code,wind_speed_10m&hourly=temperature_2m,precipitation_probability,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset&timezone=auto&forecast_days=7"
+    let url = "https://api.open-meteo.com/v1/forecast?latitude=" + ("" + current_city.latitude) + "&longitude=" + ("" + current_city.longitude) + "&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,weather_code,wind_speed_10m&hourly=temperature_2m,precipitation_probability,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,uv_index_max,sunrise,sunset&timezone=auto&forecast_days=7"
     net.http_request(net.HttpRequest{url: url method: net.HttpMethod.GET}) do net.HttpEvents{
         on_response: |response| handle_weather_response(response)
         on_error: |_error| { app_status = "天气暂时不可用，请检查网络后重试" ui.content.render() }
@@ -156,6 +169,7 @@ fn toggle_preference(wanted){
     if !found { kept.push(wanted) }
     preferences = kept
     save_data()
+    request_outing_advice()
     ui.content.render()
 }
 fn add_custom_tag(){
@@ -164,6 +178,7 @@ fn add_custom_tag(){
     preferences.push(custom_tag)
     custom_tag = ""
     save_data()
+    request_outing_advice()
     goto("mine")
 }
 fn add_family_city(){
@@ -177,23 +192,228 @@ fn add_family_city(){
     ui.content.render()
 }
 fn toggle_reminders(){ reminders_on = !reminders_on save_data() ui.content.render() }
+fn schedule_context(){
+    let rows = []
+    for event in schedule { rows.push({title: event.title start: event.start end: event.end}) }
+    rows
+}
+fn hourly_context(){
+    let rows = []
+    if current_weather != nil && current_weather.hourly != nil {
+        for i in 48 {
+            if i < current_weather.hourly.time.len() {
+                rows.push({time: current_weather.hourly.time[i], weather: weather_text(current_weather.hourly.weather_code[i]),
+                    temperature_c: current_weather.hourly.temperature_2m[i], precipitation_probability_percent: current_weather.hourly.precipitation_probability[i]})
+            }
+        }
+    }
+    rows
+}
+fn daily_context(){
+    let rows = []
+    if current_weather != nil && current_weather.daily != nil {
+        for i in 7 {
+            if i < current_weather.daily.time.len() {
+                rows.push({date: current_weather.daily.time[i], weather: weather_text(current_weather.daily.weather_code[i]),
+                    low_c: current_weather.daily.temperature_2m_min[i], high_c: current_weather.daily.temperature_2m_max[i]})
+            }
+        }
+    }
+    rows
+}
+fn fallback_outing_advice(){
+    if current_weather == nil { return "天气加载后，Daycast 会结合你的衣橱和日程给出建议。" }
+    let advice = "当前体感 " + round(current_weather.current.apparent_temperature) + "°C，天气 " + weather_text(current_weather.current.weather_code) + "。"
+    if wardrobe.len() > 0 { advice = advice + "衣橱里可以考虑：" + wardrobe[0] + "。" }
+    else { advice = advice + "把常穿衣物加进衣橱，建议会更贴合你。" }
+    let today = current_weather.daily.time[0]
+    let has_plan = false
+    for event in schedule { if event.start.search(today) == 0 { has_plan = true } }
+    if has_plan { advice = advice + "今天已有安排，出门前留意日程时间。" }
+    else { advice = advice + "今天日程较空，可以按天气安排户外活动。" }
+    advice
+}
+fn request_outing_advice(){
+    if current_weather == nil { advice_text = fallback_outing_advice(); return }
+    advice_generation = advice_generation + 1
+    let ticket = advice_generation
+    advice_text = "正在结合天气、衣橱和日程生成建议…"
+    ui.content.render()
+    start_timeout(1.0, || {
+        if ticket != advice_generation { return }
+        let context = {city: location_text(current_city), weather_date: current_weather.daily.time[0],
+            current: current_weather.current, hourly_forecast: hourly_context(),
+            daily_forecast: daily_context(), preferences: preferences,
+            wardrobe: wardrobe, schedule: schedule_context()}
+        let prompt = "请根据以下 Daycast 天气、衣橱、偏好与日程数据，给出一段中文今日出门建议。推荐衣物必须来自衣橱；安排出行时避开日程冲突；只引用提供的天气数据，不编造。简短说明穿什么、适合何时出门。数据：" + context.to_json()
+        host.request("octos.session.open", {}, fn(open_result){
+            if ticket != advice_generation { return }
+            if !open_result.is_ok { advice_text = fallback_outing_advice(); ui.content.render(); return }
+            host.request("octos.turn.start", {text: prompt}, fn(result){
+                if ticket != advice_generation { return }
+                if result.is_ok && result.data != nil && result.data.text != nil && result.data.text.trim() != "" { advice_text = result.data.text.trim() }
+                else { advice_text = fallback_outing_advice() }
+                ui.content.render()
+            })
+        })
+    })
+}
+fn add_clothing(){
+    let item = ui.clothing_input.text().trim()
+    if item == "" { return }
+    let exists = false
+    for i in wardrobe.len() { if wardrobe[i] == item { exists = true } }
+    if !exists { wardrobe.push(item) }
+    ui.clothing_input.set_text("")
+    save_data()
+    request_outing_advice()
+    ui.content.render()
+}
+fn remove_clothing(index){
+    let kept = []
+    for i in wardrobe.len() { if i != index { kept.push(wardrobe[i]) } }
+    wardrobe = kept
+    save_data()
+    request_outing_advice()
+    ui.content.render()
+}
+fn normalize_datetime(value){
+    let halves = value.trim().replace(" ", "T").split("T")
+    if halves.len() != 2 { return "" }
+    let date = halves[0].split("-")
+    let time = halves[1].split(":")
+    if date.len() != 3 || time.len() < 2 { return "" }
+    let minute = time[1].split("+")[0].split("-")[0].split("Z")[0]
+    date[0] + "-" + date[1] + "-" + date[2] + "T" + time[0] + ":" + minute
+}
+fn datetime_number(value){
+    let halves = value.split("T")
+    let date = halves[0].split("-")
+    let time = halves[1].split(":")
+    (date[0] + date[1] + date[2] + time[0] + time[1]).to_f64()
+}
+fn valid_datetime(value){
+    if value.len() != 16 || value.search("-") != 4 || value.search("T") != 10 || value.search(":") != 13 { return false }
+    let halves = value.split("T")
+    let date = halves[0].split("-")
+    let time = halves[1].split(":")
+    if date[0].len() != 4 || date[1].len() != 2 || date[2].len() != 2 || time[0].len() != 2 || time[1].len() != 2 { return false }
+    let month = date[1].to_f64()
+    let day = date[2].to_f64()
+    let hour = time[0].to_f64()
+    let minute = time[1].to_f64()
+    if month < 1 || month > 12 || day < 1 || day > 31 || hour < 0 || hour > 23 || minute < 0 || minute > 59 { return false }
+    let number = datetime_number(value)
+    number == number
+}
+fn add_schedule_item(){
+    let title = ui.schedule_title_input.text().trim()
+    let start = normalize_datetime(ui.schedule_start_input.text())
+    let end = normalize_datetime(ui.schedule_end_input.text())
+    if title == "" { app_status = "请填写日程事项"; ui.content.render(); return }
+    if !valid_datetime(start) || !valid_datetime(end) || datetime_number(start) >= datetime_number(end) {
+        app_status = "时间格式请用 YYYY-MM-DDTHH:mm，且结束时间晚于开始时间"
+        ui.content.render()
+        return
+    }
+    for event in schedule {
+        if datetime_number(start) < datetime_number(event.end) && datetime_number(event.start) < datetime_number(end) {
+            app_status = "这个时间段与“" + event.title + "”重叠，请调整时间"
+            ui.content.render()
+            return
+        }
+    }
+    schedule.push({title: title start: start end: end})
+    ui.schedule_title_input.set_text("")
+    ui.schedule_start_input.set_text("")
+    ui.schedule_end_input.set_text("")
+    app_status = "已添加到日程表"
+    save_data()
+    request_outing_advice()
+    ui.content.render()
+}
+fn remove_schedule_item(index){
+    let kept = []
+    for i in schedule.len() { if i != index { kept.push(schedule[i]) } }
+    schedule = kept
+    save_data()
+    request_outing_advice()
+    ui.content.render()
+}
+fn confirm_ai_event(){
+    if pending_event == nil { return }
+    let event = pending_event
+    if event.title.trim() == "" || !valid_datetime(event.start) || !valid_datetime(event.end) || datetime_number(event.start) >= datetime_number(event.end) {
+        app_status = "AI 给出的时间格式不正确，未添加"
+        pending_event = nil
+        ui.content.render()
+        return
+    }
+    for existing in schedule {
+        if datetime_number(event.start) < datetime_number(existing.end) && datetime_number(existing.start) < datetime_number(event.end) {
+            app_status = "确认前发现日程冲突，未添加；请重新安排"
+            pending_event = nil
+            ui.content.render()
+            return
+        }
+    }
+    schedule.push({title: event.title start: event.start end: event.end})
+    pending_event = nil
+    app_status = "已按你的确认添加到日程表"
+    save_data()
+    request_outing_advice()
+    ui.content.render()
+}
+fn dismiss_ai_event(){ pending_event = nil; ui.content.render() }
+fn handle_assistant_answer(answer, ticket, schedule_intent){
+    if ticket != qa_generation { return }
+    pending_event = nil
+    let reply = answer.trim()
+    if answer.search("[DAYCAST_EVENT]") >= 0 {
+        let parts = answer.split("[DAYCAST_EVENT]")
+        let body = parts[1].split("[/DAYCAST_EVENT]")
+        reply = parts[0].trim()
+        let event = body[0].trim().parse_json()
+        if event != nil && event.title != nil && event.start != nil && event.end != nil {
+            let start = normalize_datetime(event.start)
+            let end = normalize_datetime(event.end)
+            if valid_datetime(start) && valid_datetime(end) && datetime_number(start) < datetime_number(end) {
+                pending_event = {title: event.title start: start end: end reason: if event.reason == nil {"按天气和现有日程推荐"} else {event.reason}}
+            } else { reply = reply + "\n日程草案的时间格式不正确，没有添加。请补充明确的日期和起止时间。" }
+        } else { reply = reply + "\n日程草案无法读取，没有添加。请补充明确的日期和起止时间。" }
+    } elif schedule_intent {
+        reply = reply + "\n要创建日程，请告诉我具体日期和时间段；这条消息还没有写入日程表。"
+    }
+    if reply == "" { reply = "暂时无法生成回答，请稍后重试。" }
+    chat_messages.push({speaker: "Daycast", text: reply})
+    app_status = ""
+    ui.content.render()
+}
 fn send_weather_question(){
     question_text = ui.question.text().trim()
     if question_text == "" { return }
     chat_messages.push({speaker: "我", text: question_text})
-    let prompt = "你是天气助手。请只根据以下天气数据回答用户问题；没有数据时说明不知道，不要编造。城市：" + location_text(current_city)
-    if current_weather != nil { prompt = prompt + "；当前温度 " + current_weather.current.temperature_2m + "°C；体感 " + current_weather.current.apparent_temperature + "°C；天气 " + weather_text(current_weather.current.weather_code) + "；今日最高 " + current_weather.daily.temperature_2m_max[0] + "°C，最低 " + current_weather.daily.temperature_2m_min[0] + "°C" }
-    prompt = prompt + "。用户问题：" + question_text
+    let schedule_intent = create_schedule_mode
+    create_schedule_mode = false
+    qa_generation = qa_generation + 1
+    let ticket = qa_generation
+    let context = {question: question_text, intent_mode: if schedule_intent {"create_schedule"} else {"chat"},
+        city: location_text(current_city), weather_date: if current_weather == nil {""} else {current_weather.daily.time[0]},
+        current: if current_weather == nil {nil} else {current_weather.current},
+        hourly_forecast: hourly_context(), daily_forecast: daily_context(),
+        preferences: preferences, wardrobe: wardrobe, existing_schedule: schedule_context()}
+    let mode_instruction = "普通问答模式：回答天气、衣物或活动建议。只引用上下文里提供的天气事实，不编造。若讨论活动时间，查阅日程并推荐不冲突的时段；仅当用户明确想安排活动且日期、起止时间足够明确时，才在回答末尾附上一个待确认的日程草案。单纯说提醒或闹铃时不要创建日程，提示用户可开启创建日程按钮。"
+    if schedule_intent { mode_instruction = "创建日程模式：用户这条消息要添加到 Daycast 日程表，不要建议设置闹铃。结合天气和现有日程提取活动、日期及起止时间；缺少关键信息时只追问，并且不要生成草案。信息明确且无冲突时，在回答末尾附上待确认草案。" }
+    let prompt = "你是 Daycast 天气与日程顾问。今天日期见 weather_date；明天等相对日期必须换算成明确日期。天气只使用提供的数据。衣物推荐只能来自用户衣橱。" + mode_instruction + "\n如果要提出日程草案，必须在答案最后单独附加一行 [DAYCAST_EVENT] 后接 JSON 对象，再接 [/DAYCAST_EVENT]。对象格式严格为 {\"title\":\"活动\",\"start\":\"YYYY-MM-DDTHH:mm\",\"end\":\"YYYY-MM-DDTHH:mm\",\"reason\":\"推荐理由\"}；24 小时制，不能有秒、空格或时区。除这行外正常用中文回答。未点击‘确认并添加’之前，绝不能声称已经写入日程。上下文：" + context.to_json()
     question_text = ""
     app_status = "正在联系 OctoSense 助手…"
+    ui.question.set_text("")
     ui.content.render()
     host.request("octos.session.open", {}, fn(open_result){
-        if !open_result.is_ok { chat_messages.push({speaker: "天气助手", text: "助手暂不可用，请检查 OctoSense 授权和 AI 设置。"}) app_status = "" ui.content.render() return }
-        host.request("octos.turn.start", {text: prompt}, fn(answer){
-            if answer.is_ok { chat_messages.push({speaker: "天气助手", text: answer.data.text}) }
-            else { chat_messages.push({speaker: "天气助手", text: "问答未完成，请检查 OctoSense 授权和 AI 设置。"}) }
-            app_status = ""
-            ui.content.render()
+        if !open_result.is_ok { if ticket == qa_generation { chat_messages.push({speaker: "Daycast", text: "助手暂不可用，请检查 OctoSense 授权和 AI 设置。"}) }; app_status = ""; ui.content.render(); return }
+        host.request("octos.turn.start", {text: prompt}, fn(result){
+            if result.is_ok && result.data != nil && result.data.text != nil { handle_assistant_answer(result.data.text, ticket, schedule_intent) }
+            else if ticket == qa_generation { chat_messages.push({speaker: "Daycast", text: "问答未完成，请检查 OctoSense 授权和 AI 设置。"}); pending_event = nil; app_status = ""; ui.content.render() }
         })
     })
     ui.content.render()
@@ -208,7 +428,7 @@ let navy = #x12243b
 let pale = #xf2f6fa
 SolidView{width: Fill height: Fill flow: Down padding: 16 spacing: 10 draw_bg.color: pale
     View{width: Fill height: Fit flow: Right align: Align{y: 0.5} spacing: 8
-        Label{text: "天气助手" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 24}}
+        Label{text: "Daycast" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 24}}
         View{width: Fill height: 1}
         ButtonFlat{text: "刷新" height: 38 on_click: || refresh_weather()
             draw_bg +: {border_radius: 18.0 color: #xe5edf6 color_hover: #xd8e6f3 color_down: #xcbddec border_size: 0.0}
@@ -229,14 +449,14 @@ SolidView{width: Fill height: Fill flow: Down padding: 16 spacing: 10 draw_bg.co
                 Label{text: app_status draw_text.color: #xffd0ab draw_text.text_style.font_size: 13}
             }
             RoundedView{width: Fill height: Fit padding: 16 flow: Down spacing: 8 show_bg: true draw_bg.color: #xffffff draw_bg.border_radius: 18.0
-                Label{text: "今日出门建议" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 18}}
-                if current_weather == nil { Label{text: "正在读取天气，稍后会给出穿衣与出行建议。" draw_text.color: muted} }
+                Label{text: "今日出门建议 · AI" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 18}}
+                Label{width: Fill height: Fit text: advice_text draw_text.color: muted}
+                if current_weather == nil { Label{text: "正在读取天气…" draw_text.color: muted} }
                 else {
                     Label{text: weather_text(current_weather.current.weather_code) + " · 当前 " + round(current_weather.current.temperature_2m) + "°C" draw_text.color: ink}
-                    Label{text: "早晚温差大，出门前查看逐小时预报。" draw_text.color: muted}
                 }
                 View{width: Fill height: Fit flow: Right spacing: 8
-                    ButtonFlat{text: "问问天气助手" height: 36 on_click: || goto("qa") draw_bg +: {border_radius: 18.0 color: #xffeedc color_hover: #xffdfb5 color_down: #xffd28d border_size: 0.0} draw_text.color: ink}
+                    ButtonFlat{text: "问问 Daycast" height: 36 on_click: || goto("qa") draw_bg +: {border_radius: 18.0 color: #xffeedc color_hover: #xffdfb5 color_down: #xffd28d border_size: 0.0} draw_text.color: ink}
                     ButtonFlat{text: "家庭提醒" height: 36 on_click: || goto("mine") draw_bg +: {border_radius: 18.0 color: #xedf3fa color_hover: #xdce8f5 color_down: #xcbddec border_size: 0.0} draw_text.color: ink}
                 }
             }
@@ -274,17 +494,31 @@ SolidView{width: Fill height: Fill flow: Down padding: 16 spacing: 10 draw_bg.co
             }
         }
         if page == "qa" {
-            Label{text: "天气问答" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 24}}
-            Label{text: "使用 OctoSense 助手回答天气问题。" draw_text.color: muted}
-            Label{text: "首次使用需要在宿主授权。" draw_text.color: muted}
+            Label{text: "Daycast 问答" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 24}}
+            Label{text: "回答会参考天气、衣橱与日程；添加安排前会先请你确认。" draw_text.color: muted}
             RoundedView{width: Fill height: Fit padding: 14 flow: Down spacing: 8 show_bg: true draw_bg.color: #xffffff draw_bg.border_radius: 18.0
                 Label{text: "当前上下文：" + location_text(current_city) draw_text.color: #xc16e24}
-                if chat_messages.len() == 0 { Label{text: "可以问：今天适合跑步吗？要带伞吗？" draw_text.color: muted} }
+                if chat_messages.len() == 0 { Label{text: "可以问：什么时候适合骑车？也可以点下方创建日程。" draw_text.color: muted} }
                 for i in chat_messages.len() {
                     Label{text: chat_messages[i].speaker + "：" + chat_messages[i].text draw_text.color: ink}
                     Hr{}
                 }
                 Label{text: app_status draw_text.color: #xa35d20}
+            }
+            if pending_event != nil {
+                RoundedView{width: Fill height: Fit padding: 14 flow: Down spacing: 8 show_bg: true draw_bg.color: #xfff3e5 draw_bg.border_radius: 18.0
+                    Label{text: "待你确认的日程建议" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 17}}
+                    Label{text: pending_event.title + " · " + pending_event.start + " 至 " + pending_event.end draw_text.color: ink}
+                    Label{width: Fill height: Fit text: pending_event.reason draw_text.color: muted}
+                    View{width: Fill height: Fit flow: Right spacing: 8
+                        ButtonFlat{text: "确认并添加" height: 38 on_click: || confirm_ai_event() draw_bg +: {border_radius: 18.0 color: #xed9b4d color_hover: #xf5a75f color_down: #xdd873b border_size: 0.0} draw_text.color: #xffffff}
+                        ButtonFlatter{text: "暂不添加" height: 38 on_click: || dismiss_ai_event() draw_text.color: muted}
+                    }
+                }
+            }
+            View{width: Fill height: Fit flow: Right spacing: 8 align: Align{y: 0.5}
+                ButtonFlat{text: if create_schedule_mode {"✓ 创建日程（本条消息）"} else {"＋ 创建日程"} height: 34 on_click: || {create_schedule_mode = !create_schedule_mode; ui.content.render()} draw_bg +: {border_radius: 17.0 color: #xeaf1f8 color_hover: #xffdfb3 color_down: #xffd29a border_size: 0.0} draw_text.color: ink}
+                if create_schedule_mode { Label{text: "开启后发送的这条消息会按日程创建处理" draw_text.color: muted draw_text.text_style.font_size: 12} }
             }
             View{width: Fill height: Fit flow: Right spacing: 8 align: Align{y: 0.5}
                 question := TextInput{width: Fill height: 42 empty_text: "输入你的天气问题" on_return: |text| send_weather_question()
@@ -350,6 +584,16 @@ SolidView{width: Fill height: Fill flow: Down padding: 16 spacing: 10 draw_bg.co
         }
         if page == "mine" {
             Label{text: "我的" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 24}}
+            RoundedView{width: Fill height: Fit padding: 16 flow: Down spacing: 8 show_bg: true draw_bg.color: #xffffff draw_bg.border_radius: 18.0
+                Label{text: "衣橱" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 18}}
+                Label{text: if wardrobe.len() == 0 {"添加已有衣物，让出门建议更贴合你。"} else {"已记录 " + wardrobe.len() + " 类衣物"} draw_text.color: muted}
+                ButtonFlat{text: "管理衣橱 ›" height: 38 on_click: || goto("wardrobe") draw_bg +: {border_radius: 18.0 color: #xffeedc color_hover: #xffdfb5 color_down: #xffd28d border_size: 0.0} draw_text.color: ink}
+            }
+            RoundedView{width: Fill height: Fit padding: 16 flow: Down spacing: 8 show_bg: true draw_bg.color: #xffffff draw_bg.border_radius: 18.0
+                Label{text: "日程表" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 18}}
+                Label{text: if schedule.len() == 0 {"记录安排，Daycast 会避开冲突推荐活动时间。"} else {"已安排 " + schedule.len() + " 项"} draw_text.color: muted}
+                ButtonFlat{text: "管理日程表 ›" height: 38 on_click: || goto("schedule") draw_bg +: {border_radius: 18.0 color: #xeaf1f8 color_hover: #xdce8f4 color_down: #xcbddec border_size: 0.0} draw_text.color: ink}
+            }
             RoundedView{width: Fill height: Fit padding: 16 flow: Down spacing: 10 show_bg: true draw_bg.color: #xffffff draw_bg.border_radius: 18.0
                 Label{text: "天气偏好" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 18}}
                 Label{text: "点选你的体感和关注项，用于个性化建议" draw_text.color: muted}
@@ -387,6 +631,55 @@ SolidView{width: Fill height: Fill flow: Down padding: 16 spacing: 10 draw_bg.co
             Label{text: "输入你想关注的天气事项" draw_text.color: muted}
             new_tag := TextInput{width: Fill height: 44 empty_text: "例如：花粉、晾晒、骑行" draw_bg +: {color: #xffffff color_hover: #xffffff color_focus: #xffffff color_empty: #xffffff border_radius: 10.0} draw_text +: {color: ink color_empty: muted color_empty_hover: muted}}
             ButtonFlat{text: "保存标签" height: 42 on_click: || add_custom_tag() draw_bg +: {border_radius: 20.0 color: #xed9b4d color_hover: #xf5a75f color_down: #xdd873b border_size: 0.0} draw_text.color: #xffffff}
+        }
+        if page == "wardrobe" {
+            View{width: Fill height: Fit flow: Right spacing: 8 align: Align{y: 0.5}
+                ButtonFlatter{text: "‹ 我的" height: 36 on_click: || goto("mine") draw_text.color: #xc16e24}
+                Label{text: "衣橱" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 24}}
+            }
+            Label{text: "添加你已有的衣物类型，例如：羽绒服、雨衣、运动鞋。" draw_text.color: muted}
+            View{width: Fill height: Fit flow: Right spacing: 8
+                clothing_input := TextInput{width: Fill height: 42 empty_text: "衣物类型" on_return: |text| add_clothing()
+                    draw_bg +: {color: #xffffff color_hover: #xffffff color_focus: #xffffff color_empty: #xffffff border_radius: 10.0}
+                    draw_text +: {color: ink color_empty: muted color_empty_hover: muted}}
+                ButtonFlat{text: "添加" height: 42 on_click: || add_clothing() draw_bg +: {border_radius: 18.0 color: #xed9b4d color_hover: #xf5a75f color_down: #xdd873b border_size: 0.0} draw_text.color: #xffffff}
+            }
+            if wardrobe.len() == 0 { Label{text: "衣橱还是空的" draw_text.color: muted} }
+            for i in wardrobe.len() {
+                RoundedView{width: Fill height: Fit padding: 12 flow: Right align: Align{y: 0.5} show_bg: true draw_bg.color: #xffffff draw_bg.border_radius: 14.0
+                    Label{width: Fill text: wardrobe[i] draw_text.color: ink}
+                    ButtonFlatter{text: "移除" height: 32 on_click: || remove_clothing(i) draw_text.color: #xc16e24}
+                }
+            }
+        }
+        if page == "schedule" {
+            View{width: Fill height: Fit flow: Right spacing: 8 align: Align{y: 0.5}
+                ButtonFlatter{text: "‹ 我的" height: 36 on_click: || goto("mine") draw_text.color: #xc16e24}
+                Label{text: "日程表" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 24}}
+            }
+            Label{text: "使用本地时间，格式 YYYY-MM-DDTHH:mm；开始时间需早于结束时间。" draw_text.color: muted}
+            schedule_title_input := TextInput{width: Fill height: 42 empty_text: "要做的事"
+                draw_bg +: {color: #xffffff color_hover: #xffffff color_focus: #xffffff color_empty: #xffffff border_radius: 10.0}
+                draw_text +: {color: ink color_empty: muted color_empty_hover: muted}}
+            schedule_start_input := TextInput{width: Fill height: 42 empty_text: "开始时间，例如 2026-10-05T15:00"
+                draw_bg +: {color: #xffffff color_hover: #xffffff color_focus: #xffffff color_empty: #xffffff border_radius: 10.0}
+                draw_text +: {color: ink color_empty: muted color_empty_hover: muted}}
+            schedule_end_input := TextInput{width: Fill height: 42 empty_text: "结束时间，例如 2026-10-05T16:00"
+                draw_bg +: {color: #xffffff color_hover: #xffffff color_focus: #xffffff color_empty: #xffffff border_radius: 10.0}
+                draw_text +: {color: ink color_empty: muted color_empty_hover: muted}}
+            ButtonFlat{text: "添加到日程" height: 42 on_click: || add_schedule_item() draw_bg +: {border_radius: 20.0 color: #xed9b4d color_hover: #xf5a75f color_down: #xdd873b border_size: 0.0} draw_text.color: #xffffff}
+            Label{text: app_status draw_text.color: #xa35d20}
+            Label{text: "已有安排" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 18}}
+            if schedule.len() == 0 { Label{text: "还没有日程" draw_text.color: muted} }
+            for i in schedule.len() {
+                RoundedView{width: Fill height: Fit padding: 12 flow: Down spacing: 5 show_bg: true draw_bg.color: #xffffff draw_bg.border_radius: 14.0
+                    View{width: Fill height: Fit flow: Right align: Align{y: 0.5}
+                        Label{width: Fill text: schedule[i].title draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 16}}
+                        ButtonFlatter{text: "删除" height: 32 on_click: || remove_schedule_item(i) draw_text.color: #xc16e24}
+                    }
+                    Label{text: schedule[i].start + " 至 " + schedule[i].end draw_text.color: muted}
+                }
+            }
         }
     }}
     View{width: Fill height: Fit flow: Right spacing: 4
