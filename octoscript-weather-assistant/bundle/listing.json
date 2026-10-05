@@ -17,7 +17,7 @@
     "support": "https://github.com/buqizixv/shaotangjiabing/issues",
     "privacy_policy_url": "https://github.com/buqizixv/shaotangjiabing/blob/main/octoscript-weather-assistant/PRIVACY.md"
   },
-  "release_notes": "0.4.0：问答新增 AI 添加衣物、创建天气偏好和家庭城市模式；识别结果或匹配城市会先展示给你确认，再写入本机资料。",
+  "release_notes": "0.4.1：衣橱会显示每件衣物的存放位置，并可从衣物卡片编辑；未填写的位置会明确标为未填写。",
   "age_rating": "all",
   "license": "Apache-2.0"
 }

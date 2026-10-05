@@ -58,6 +58,7 @@ let clothing_photo_view_path = ""
 let clothing_photo_status = ""
 let clothing_photo_busy = false
 let clothing_camera_status = ""
+let clothing_form_status = ""
 let advice_text = "天气加载后，Daycast 会结合你的衣橱和日程给出建议。"
 let advice_generation = 0
 let qa_generation = 0
@@ -369,6 +370,7 @@ fn add_clothing(){
         if wardrobe_photos[i] != "" && wardrobe_photos[i] != clothing_photo && fs.exists(wardrobe_photos[i]) { fs.remove(wardrobe_photos[i]) }
         wardrobe_photos[i] = clothing_photo
     } } }
+    clothing_form_status = if exists {"衣物信息已更新"} else {"已添加衣物"}
     new_clothing_location = ""
     clothing_photo = ""
     clothing_photo_status = ""
@@ -393,6 +395,14 @@ fn remove_clothing(index){
     wardrobe_photos = kept_photos
     save_data()
     request_outing_advice()
+    ui.content.render()
+}
+fn edit_clothing_location(index){
+    if index >= wardrobe.len() { return }
+    new_clothing_location = if index < wardrobe_locations.len() {wardrobe_locations[index]} else {""}
+    ui.clothing_input.set_text(wardrobe[index])
+    ui.clothing_location.set_text(new_clothing_location)
+    clothing_form_status = "修改存放位置后，点击添加 / 更新即可保存"
     ui.content.render()
 }
 fn normalize_datetime(value){
@@ -871,16 +881,18 @@ SolidView{width: Fill height: Fill flow: Down padding: 16 spacing: 10 draw_bg.co
             clothing_photo_status := Label{width: Fill text: clothing_photo_status draw_text.color: muted draw_text.text_style.font_size: 13}
             clothing_photo_preview := Image{visible: false width: 120 height: 140 fit: ImageFit.CropToFill}
             View{width: Fill height: Fit flow: Right spacing: 8
-                ButtonFlat{text: "添加" height: 42 on_click: || add_clothing() draw_bg +: {border_radius: 18.0 color: #xed9b4d color_hover: #xf5a75f color_down: #xdd873b border_size: 0.0} draw_text.color: #xffffff}
+                ButtonFlat{text: "添加 / 更新" height: 42 on_click: || add_clothing() draw_bg +: {border_radius: 18.0 color: #xed9b4d color_hover: #xf5a75f color_down: #xdd873b border_size: 0.0} draw_text.color: #xffffff}
             }
+            Label{text: clothing_form_status draw_text.color: #xa35d20 draw_text.text_style.font_size: 13}
             if wardrobe.len() == 0 { Label{text: "衣橱还是空的" draw_text.color: muted} }
             for i in wardrobe.len() {
                 RoundedView{width: Fill height: Fit padding: 12 flow: Right align: Align{y: 0.5} show_bg: true draw_bg.color: #xffffff draw_bg.border_radius: 14.0
                     View{width: Fill flow: Down spacing: 3
                         Label{width: Fill text: wardrobe[i] draw_text.color: ink}
-                        if i < wardrobe_locations.len() && wardrobe_locations[i] != "" { Label{width: Fill text: "存放位置：" + wardrobe_locations[i] draw_text.color: muted draw_text.text_style.font_size: 13} }
+                        Label{width: Fill text: "存放位置：" + if i < wardrobe_locations.len() && wardrobe_locations[i] != "" {wardrobe_locations[i]} else {"未填写"} draw_text.color: muted draw_text.text_style.font_size: 13}
                         if i < wardrobe_photos.len() && wardrobe_photos[i] != "" { ButtonFlatter{text: "查看衣物照片" height: 30 on_click: || open_saved_clothing_photo(i) draw_text.color: #xc16e24} }
                     }
+                    ButtonFlatter{text: "编辑位置" height: 32 on_click: || edit_clothing_location(i) draw_text.color: #xc16e24}
                     ButtonFlatter{text: "移除" height: 32 on_click: || remove_clothing(i) draw_text.color: #xc16e24}
                 }
             }
