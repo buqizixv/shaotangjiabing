@@ -50,6 +50,8 @@ let schedule_start = ""
 let schedule_end = ""
 let pending_event = nil
 let create_schedule_mode = false
+let qa_action_mode = ""
+let pending_action = nil
 let new_clothing_location = ""
 let clothing_photo = ""
 let clothing_photo_view_path = ""
@@ -85,7 +87,17 @@ fn load_data(){
     refresh_weather()
     ui.content.render()
 }
-fn goto(target){ page = target if target != "qa" { create_schedule_mode = false } ui.content.render() }
+fn goto(target){ page = target if target != "qa" { select_qa_mode("") } ui.content.render() }
+fn select_qa_mode(mode){
+    if qa_action_mode == mode { qa_action_mode = "" } else { qa_action_mode = mode }
+    create_schedule_mode = qa_action_mode == "create_schedule"
+    ui.schedule_mode_button.set_text(if create_schedule_mode {"✓ 创建日程"} else {"＋ 创建日程"})
+    ui.clothing_mode_button.set_text(if qa_action_mode == "add_clothing" {"✓ 添加衣物"} else {"＋ 添加衣物"})
+    ui.preference_mode_button.set_text(if qa_action_mode == "create_preference" {"✓ 创建天气偏好"} else {"＋ 创建天气偏好"})
+    ui.family_city_mode_button.set_text(if qa_action_mode == "add_family_city" {"✓ 添加家庭城市"} else {"＋ 添加家庭城市"})
+    ui.schedule_hint.set_visible(qa_action_mode != "")
+    ui.schedule_hint.set_text(if qa_action_mode == "create_schedule" {"这条消息会作为日程创建请求"} else if qa_action_mode == "add_clothing" {"告诉 AI 衣物类型；存放位置可以一起描述"} else if qa_action_mode == "create_preference" {"告诉 AI 你想记录的天气偏好"} else if qa_action_mode == "add_family_city" {"告诉 AI 家人所在城市，确认匹配后加入"} else {""})
+}
 fn handle_weather_response(response){
     if response.status_code >= 400 { app_status = "天气服务暂时不可用（" + ("" + response.status_code) + "）" ui.content.render() return }
     let data = response.body.to_string().parse_json()
@@ -471,11 +483,82 @@ fn confirm_ai_event(){
     ui.content.render()
 }
 fn dismiss_ai_event(){ pending_event = nil; ui.content.render() }
-fn handle_assistant_answer(answer, ticket, schedule_intent){
+fn ai_action_text(){
+    if pending_action == nil { return "" }
+    if pending_action.kind == "add_clothing" {
+        if pending_action.location != "" { return "添加衣物：" + pending_action.value + "（存放位置：" + pending_action.location + "）" }
+        return "添加衣物：" + pending_action.value
+    }
+    if pending_action.kind == "create_preference" { return "创建天气偏好：" + pending_action.value }
+    if pending_action.kind == "add_family_city" { return "添加家庭城市：" + location_text(pending_action.city) }
+    ""
+}
+fn handle_family_city_geocode(response, ticket, query){
+    if ticket != qa_generation { return }
+    if response.status_code >= 400 { app_status = "城市查询暂时不可用，没有添加家庭城市"; ui.content.render(); return }
+    let data = response.body.to_string().parse_json()
+    if data == nil || data.results == nil || data.results.len() == 0 {
+        app_status = "没有找到“" + query + "”，请在城市搜索中选择准确地点"
+        ui.content.render()
+        return
+    }
+    pending_action = {kind: "add_family_city", city: data.results[0]}
+    app_status = "已找到城市，请核对后确认添加"
+    ui.content.render()
+}
+fn stage_ai_action(kind, value, location, ticket, expected_mode){
+    if ticket != qa_generation || kind != expected_mode { return }
+    value = value.trim()
+    location = location.trim()
+    if value == "" { app_status = "AI 没能识别要添加的内容，请补充后再试"; ui.content.render(); return }
+    if kind == "add_family_city" {
+        app_status = "正在核对城市名称…"
+        ui.content.render()
+        let url = "https://geocoding-api.open-meteo.com/v1/search?name=" + value.url_encode() + "&count=1&language=zh&format=json"
+        net.http_request(net.HttpRequest{url: url method: net.HttpMethod.GET}) do net.HttpEvents{
+            on_response: |response| handle_family_city_geocode(response, ticket, value)
+            on_error: |_error| { if ticket == qa_generation { app_status = "城市查询失败，没有添加家庭城市"; ui.content.render() } }
+        }
+        return
+    }
+    pending_action = {kind: kind, value: value, location: location}
+    app_status = "请核对下方内容，确认后会写入你的资料"
+    ui.content.render()
+}
+fn confirm_ai_action(){
+    if pending_action == nil { return }
+    let action = pending_action
+    if action.kind == "add_clothing" {
+        let found = false
+        for i in wardrobe.len() {
+            if wardrobe[i] == action.value {
+                found = true
+                if action.location != "" && i < wardrobe_locations.len() { wardrobe_locations[i] = action.location }
+            }
+        }
+        if !found { wardrobe.push(action.value); wardrobe_locations.push(action.location); wardrobe_photos.push("") }
+        app_status = if found {"衣物已在衣橱中；已按确认更新存放位置"} else {"已添加到衣橱"}
+    } elif action.kind == "create_preference" {
+        if has_preference(action.value) { app_status = "这个天气偏好已经存在" }
+        else { preferences.push(action.value); app_status = "已创建天气偏好" }
+    } elif action.kind == "add_family_city" {
+        let found = false
+        for city in family_cities { if city.name == action.city.name && city.country == action.city.country { found = true } }
+        if found { app_status = "这个家庭城市已经添加过了" }
+        else { family_cities.push(action.city); app_status = "已添加家庭城市：" + location_text(action.city) }
+    }
+    pending_action = nil
+    save_data()
+    request_outing_advice()
+    ui.content.render()
+}
+fn dismiss_ai_action(){ pending_action = nil; app_status = "已取消，没有修改资料"; ui.content.render() }
+fn handle_assistant_answer(answer, ticket, schedule_intent, action_mode){
     if ticket != qa_generation { return }
     pending_event = nil
+    pending_action = nil
     let reply = answer.trim()
-    if answer.search("[DAYCAST_EVENT]") >= 0 {
+    if (schedule_intent || action_mode == "chat") && answer.search("[DAYCAST_EVENT]") >= 0 {
         let parts = answer.split("[DAYCAST_EVENT]")
         let body = parts[1].split("[/DAYCAST_EVENT]")
         reply = parts[0].trim()
@@ -490,6 +573,17 @@ fn handle_assistant_answer(answer, ticket, schedule_intent){
     } elif schedule_intent {
         reply = reply + "\n要创建日程，请告诉我具体日期和时间段；这条消息还没有写入日程表。"
     }
+    if !schedule_intent && action_mode != "chat" && answer.search("[DAYCAST_ACTION]") >= 0 {
+        let parts = answer.split("[DAYCAST_ACTION]")
+        let body = parts[1].split("[/DAYCAST_ACTION]")
+        reply = parts[0].trim()
+        let action = body[0].trim().parse_json()
+        if action != nil && action.kind == action_mode && action.value != nil && action.location != nil {
+            stage_ai_action(action.kind, action.value, action.location, ticket, action_mode)
+        } else { reply = reply + "\n添加内容没有识别成功，请补充信息后再试。" }
+    } elif action_mode != "chat" && !schedule_intent {
+        reply = reply + "\n如果信息还不完整，请按提示补充；我不会自动写入。"
+    }
     if reply == "" { reply = "暂时无法生成回答，请稍后重试。" }
     chat_messages.push({speaker: "Daycast", text: reply})
     app_status = ""
@@ -499,18 +593,23 @@ fn send_weather_question(){
     question_text = ui.question.text().trim()
     if question_text == "" { return }
     chat_messages.push({speaker: "我", text: question_text})
-    let schedule_intent = create_schedule_mode
-    create_schedule_mode = false
+    let action_mode = if qa_action_mode == "" {"chat"} else {qa_action_mode}
+    let schedule_intent = action_mode == "create_schedule"
+    select_qa_mode("")
     qa_generation = qa_generation + 1
     let ticket = qa_generation
-    let context = {question: question_text, intent_mode: if schedule_intent {"create_schedule"} else {"chat"},
+    pending_action = nil
+    let context = {question: question_text, intent_mode: action_mode,
         city: location_text(current_city), weather_date: if current_weather == nil {""} else {current_weather.daily.time[0]},
         current: if current_weather == nil {nil} else {current_weather.current},
         hourly_forecast: hourly_context(), daily_forecast: daily_context(),
-        preferences: preferences, wardrobe: wardrobe_context(), existing_schedule: schedule_context()}
+        preferences: preferences, family_cities: family_cities, wardrobe: wardrobe_context(), existing_schedule: schedule_context()}
     let mode_instruction = "普通问答模式：回答天气、衣物或活动建议。只引用上下文里提供的天气事实，不编造。若讨论活动时间，查阅日程并推荐不冲突的时段；仅当用户明确想安排活动且日期、起止时间足够明确时，才在回答末尾附上一个待确认的日程草案。单纯说提醒或闹铃时不要创建日程，提示用户可开启创建日程按钮。"
     if schedule_intent { mode_instruction = "创建日程模式：用户这条消息要添加到 Daycast 日程表，不要建议设置闹铃。结合天气和现有日程提取活动、日期及起止时间；缺少关键信息时只追问，并且不要生成草案。信息明确且无冲突时，在回答末尾附上待确认草案。" }
-    let prompt = "你是 Daycast 天气与日程顾问。今天日期见 weather_date；明天等相对日期必须换算成明确日期。天气只使用提供的数据。衣物推荐只能来自用户衣橱。" + mode_instruction + "\n如果要提出日程草案，必须在答案最后单独附加一行 [DAYCAST_EVENT] 后接 JSON 对象，再接 [/DAYCAST_EVENT]。对象格式严格为 {\"title\":\"活动\",\"start\":\"YYYY-MM-DDTHH:mm\",\"end\":\"YYYY-MM-DDTHH:mm\",\"reason\":\"推荐理由\"}；24 小时制，不能有秒、空格或时区。除这行外正常用中文回答。未点击‘确认并添加’之前，绝不能声称已经写入日程。上下文：" + context.to_json()
+    if action_mode == "add_clothing" { mode_instruction = "添加衣物模式：只提取用户明确提到的一类衣物，可选提取明确说出的存放位置；不得推断或编造衣物、位置或照片。衣物类型不清楚就追问，不要生成草案。明确时附加待确认的衣橱操作。" }
+    if action_mode == "create_preference" { mode_instruction = "创建天气偏好模式：提取一条用户明确表达的长期天气或体感偏好，保留简洁原意；若意思不清楚或并非偏好就追问。明确时附加待确认的偏好操作。" }
+    if action_mode == "add_family_city" { mode_instruction = "添加家庭城市模式：只提取用户明确说出的一个家人所在城市，不得猜测城市或经纬度。城市不清楚就追问；明确时附加待确认的家庭城市操作，应用会查询并展示匹配地点。" }
+    let prompt = "你是 Daycast 天气与日程顾问。今天日期见 weather_date；明天等相对日期必须换算成明确日期。天气只使用提供的数据。衣物推荐只能来自用户衣橱。" + mode_instruction + "\n如果要提出日程草案，必须在答案最后单独附加一行 [DAYCAST_EVENT] 后接 JSON 对象，再接 [/DAYCAST_EVENT]。对象格式严格为 {\"title\":\"活动\",\"start\":\"YYYY-MM-DDTHH:mm\",\"end\":\"YYYY-MM-DDTHH:mm\",\"reason\":\"推荐理由\"}。如果当前是资料添加模式，必须在答案最后单独附加 [DAYCAST_ACTION] 后接 JSON 对象，再接 [/DAYCAST_ACTION]。对象严格使用 {\"kind\":\"add_clothing|create_preference|add_family_city\",\"value\":\"提取的类型、偏好文字或城市名\",\"location\":\"明确说出的衣物存放位置；其他操作填空字符串\"}。不得在普通聊天中输出资料操作。回复主体用简洁中文。用户点击确认之前，绝不能声称资料或日程已写入。上下文：" + context.to_json()
     question_text = ""
     app_status = "正在联系 OctoSense 助手…"
     ui.question.set_text("")
@@ -518,8 +617,8 @@ fn send_weather_question(){
     host.request("octos.session.open", {}, fn(open_result){
         if !open_result.is_ok { if ticket == qa_generation { chat_messages.push({speaker: "Daycast", text: "助手暂不可用，请检查 OctoSense 授权和 AI 设置。"}) }; app_status = ""; ui.content.render(); return }
         host.request("octos.turn.start", {text: prompt}, fn(result){
-            if result.is_ok && result.data != nil && result.data.text != nil { handle_assistant_answer(result.data.text, ticket, schedule_intent) }
-            else if ticket == qa_generation { chat_messages.push({speaker: "Daycast", text: "问答未完成，请检查 OctoSense 授权和 AI 设置。"}); pending_event = nil; app_status = ""; ui.content.render() }
+            if result.is_ok && result.data != nil && result.data.text != nil { handle_assistant_answer(result.data.text, ticket, schedule_intent, action_mode) }
+            else if ticket == qa_generation { chat_messages.push({speaker: "Daycast", text: "问答未完成，请检查 OctoSense 授权和 AI 设置。"}); pending_event = nil; pending_action = nil; app_status = ""; ui.content.render() }
         })
     })
     ui.content.render()
@@ -622,9 +721,24 @@ SolidView{width: Fill height: Fill flow: Down padding: 16 spacing: 10 draw_bg.co
                     }
                 }
             }
-            View{width: Fill height: Fit flow: Right spacing: 8 align: Align{y: 0.5}
-                ButtonFlat{text: if create_schedule_mode {"✓ 创建日程（本条消息）"} else {"＋ 创建日程"} height: 34 on_click: || {create_schedule_mode = !create_schedule_mode; ui.content.render()} draw_bg +: {border_radius: 17.0 color: #xeaf1f8 color_hover: #xffdfb3 color_down: #xffd29a border_size: 0.0} draw_text.color: ink}
-                if create_schedule_mode { Label{text: "开启后发送的这条消息会按日程创建处理" draw_text.color: muted draw_text.text_style.font_size: 12} }
+            if pending_action != nil {
+                RoundedView{width: Fill height: Fit padding: 14 flow: Down spacing: 8 show_bg: true draw_bg.color: #xfff3e5 draw_bg.border_radius: 18.0
+                    Label{text: "请确认要添加的资料" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 17}}
+                    Label{width: Fill height: Fit text: ai_action_text() draw_text.color: ink}
+                    View{width: Fill height: Fit flow: Right spacing: 8
+                        ButtonFlat{text: "确认添加" height: 38 on_click: || confirm_ai_action() draw_bg +: {border_radius: 18.0 color: #xed9b4d color_hover: #xf5a75f color_down: #xdd873b border_size: 0.0} draw_text.color: #xffffff}
+                        ButtonFlatter{text: "取消" height: 38 on_click: || dismiss_ai_action() draw_text.color: muted}
+                    }
+                }
+            }
+            View{width: Fill height: Fit flow: Down spacing: 6
+                View{width: Fill height: Fit flow: Right spacing: 8
+                    schedule_mode_button := ButtonFlat{text: "＋ 创建日程" height: 34 on_click: || select_qa_mode("create_schedule") draw_bg +: {border_radius: 17.0 color: #xeaf1f8 color_hover: #xffdfb3 color_down: #xffd29a border_size: 0.0} draw_text.color: ink}
+                    clothing_mode_button := ButtonFlat{text: "＋ 添加衣物" height: 34 on_click: || select_qa_mode("add_clothing") draw_bg +: {border_radius: 17.0 color: #xeaf1f8 color_hover: #xffdfb3 color_down: #xffd29a border_size: 0.0} draw_text.color: ink}
+                    preference_mode_button := ButtonFlat{text: "＋ 创建天气偏好" height: 34 on_click: || select_qa_mode("create_preference") draw_bg +: {border_radius: 17.0 color: #xeaf1f8 color_hover: #xffdfb3 color_down: #xffd29a border_size: 0.0} draw_text.color: ink}
+                    family_city_mode_button := ButtonFlat{text: "＋ 添加家庭城市" height: 34 on_click: || select_qa_mode("add_family_city") draw_bg +: {border_radius: 17.0 color: #xeaf1f8 color_hover: #xffdfb3 color_down: #xffd29a border_size: 0.0} draw_text.color: ink}
+                }
+                schedule_hint := Label{visible: false text: "这条消息会按所选类型处理" draw_text.color: muted draw_text.text_style.font_size: 12}
             }
             View{width: Fill height: Fit flow: Right spacing: 8 align: Align{y: 0.5}
                 question := TextInput{width: Fill height: 42 empty_text: "输入你的天气问题" on_return: |text| send_weather_question()
