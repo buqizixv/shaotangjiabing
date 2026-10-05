@@ -17,7 +17,7 @@
     "support": "https://github.com/buqizixv/shaotangjiabing/issues",
     "privacy_policy_url": "https://github.com/buqizixv/shaotangjiabing/blob/main/octoscript-weather-assistant/PRIVACY.md"
   },
-  "release_notes": "0.4.1：衣橱会显示每件衣物的存放位置，并可从衣物卡片编辑；未填写的位置会明确标为未填写。",
+  "release_notes": "0.4.2：修复衣橱存放位置行未显示的问题；保存后会回显位置，位置在衣物卡片中单独显示。",
   "age_rating": "all",
   "license": "Apache-2.0"
 }
