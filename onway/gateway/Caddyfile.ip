@@ -1,0 +1,7 @@
+https://120.53.104.174 {
+    tls /etc/onway-gateway/server.crt /etc/onway-gateway/server.key
+    request_body {
+        max_size 96KB
+    }
+    reverse_proxy 127.0.0.1:8080
+}

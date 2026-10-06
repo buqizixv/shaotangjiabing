@@ -2,7 +2,8 @@
   "agent": null,
   "capabilities": [
     "storage",
-    "location"
+    "location",
+    "glance"
   ],
   "compute": {
     "instruction_budget": null,
@@ -10,7 +11,7 @@
   },
   "id": "onway",
   "integrity": {
-    "bundle_blake3": "062d2903536e2aafe9282b60edcda829c4832a36ed46c9487af72494959a3f84",
+    "bundle_blake3": "054bbf7844ac8bb0d760d8821090b41798f4d4c35693f61a384a03a2799912f3",
     "signature": null
   },
   "name": "在途",
@@ -21,5 +22,5 @@
   "storage": {
     "max_bytes": null
   },
-  "version": "0.5.4"
+  "version": "1.0.0"
 }

@@ -1,73 +1,40 @@
-# 在途 MiniMax 后台
+# 在途0.6本机后台
 
-Python 3.11 及以上，无需安装依赖。密钥只存在于后台进程环境，不写入应用包。
+0.6.34：预览入口移动到主页常用地点下方，直接读取已保存的家和公司，不要求先保存固定通勤。主页显示请求进度及错误；AI 返回格式异常时仍展示经过查询的路线与天气预览，明确注明 AI 建议暂不可用，且不标记为 AI 推荐。常用地点点开先展示已保存的位置，可点击修改位置；固定通勤只列对应的家和公司。自定义日期移除了 1–7 的说明文字。
 
-在仓库的 `onway/` 目录运行：
+0.6.32：出行习惯新增固定通勤，选择已保存的家和公司、上班到达时间、下班时间。默认使用国务院公布的 2026 年节假日和调休工作日；尚未支持的年份暂停官方日期提醒，避免猜测。自定义日期选择周一至周日。
 
-```powershell
-powershell -ExecutionPolicy Bypass -File backend/start-ai.ps1
-```
+AI 与提醒、定位同时开启，设备最近的有效位置在通勤起点附近，并进入提醒时间窗口后，异步查询真实路线与出发地天气。上班建议出发时间由到达时间减去路线预估与 5 分钟余量计算；雨雪增加至 10 分钟。这不是实时道路拥堵判断。邀请确认仅打开路线选择，不自动开始行程；稍后提醒、当天不去都不修改通勤设置。预览不受通勤日期限制，不创建行程或历史，可在主页常用地点下方点击“预览推荐卡片”。
 
-按提示输入自己的 MiniMax API Key。该窗口运行后台，Ctrl+C 停止。仓库启动脚本默认读取 `.local-state` 开发数据根目录中的 `onway/` 子目录。连接已安装应用时，通过 `-AppData <宿主应用数据根目录>` 指定宿主使用的目录。必须与宿主 `--app-data` 相同，不能指向 bundle。在应用原有设置中找到“智能通勤”，阅读数据说明并开启开关；建议会直接显示在通勤卡片内。
+天气使用高德 `v3/weather/weatherInfo`，沿用现有高德凭据和受保护网关，在服务配置独立显示“天气 API 接口”。地区必须匹配，更新时间超过 4 小时的数据拒绝使用。天气失败不阻断路线查询，并明确显示未获取天气。
 
-开发预览在另一个终端启动：
+AI 记忆上方是个性化偏好，下方是历史记忆。新提示词要求中文概括、明确设置与观察分开、避免重复秒数和逐条罗列，对少量样本与人工纠正保持保守。旧记忆按标题拆分显示，保留原文；下一次后台分析会生成新的简洁格式。
 
-```powershell
-python <OctoScript-App-Design-Flow路径>/tools/octo run bundle --port 8143 --app-data .local-state --detach
-```
+验证：`python -X utf8 -m unittest backend.v060.test_v060 backend.v060.test_bus backend.v060.test_commute`；真实接口与原生界面验证 `python -X utf8 _debug/visual-strict/commute-native-test.py`，仅使用隔离数据。
 
-默认模型 `MiniMax-M2.5`，国内地址 `https://api.minimax.cn/v1`，遵循 [MiniMax 官方 OpenAI 兼容接口](https://platform.minimax.cn/docs/api-reference/text-openai-api)。可在启动前设置 `MINIMAX_MODEL`；国际账号可设置 `MINIMAX_BASE_URL=https://api.minimax.io/v1`。使用开放平台 API Key，后台不会调用 Coding Plan 的 Anthropic 接口。
+Python3.11及以上，标准库，无需pip依赖。通过项目启动脚本打开OctoSense，由宿主自动管理 `backend.v060.worker`；关闭主体不会终止后台，关闭宿主才终止。
 
-## API
+不要同时运行旧 `backend/server.py` 或旧 `start-ai.ps1`。旧模块仅保留兼容测试，0.6入口位于 `backend/v060/`。
 
-服务只监听 `127.0.0.1:8787`，不直接暴露公网。HTTP API 与文件桥共用分析器。应用通过私有文件桥连接，不尝试绕过 OctoSense 的 HTTPS 网络限制，不需要后台访问令牌。
+凭据使用当前Windows用户DPAPI加密，受保护配置页只监听本机随机端口并验证访问令牌与来源。应用通过私有命令队列提交操作；worker是唯一状态写入者。完整凭据不进入bundle或日志。
 
-| 接口 | 用途 |
-| --- | --- |
-| `GET /health` | 是否启动、是否配置密钥；不调用模型 |
-| `POST /v1/ai/analyze` | 分析输入，生成并保存建议卡片 |
-| `GET /v1/cards/latest` | 读取最近结果 |
+MiniMax固定国内开放平台端点、MiniMax-M3，已验证一次真实连接。地图按凭据类型接入：sk_coco_使用用户指定的map.culture09.xyz、Bearer认证及ok/data封装，其他Key使用高德官方Web服务。网关搜索、坐标转换、地址与步行/公交路线已真实验证。网关认证、额度和频率错误使用固定中文映射；高德错误码只保留五位数字，不把服务原文、完整URL或凭据写入日志。
 
-后两个接口需要 `Authorization: Bearer <ONWAY_API_TOKEN>`；启动前在后台环境设置令牌。未设置时 HTTP 数据接口拒绝访问，文件桥仍可运行。不启用跨域访问。
+测试：`python -X utf8 -m unittest backend.v060.test_v060 -v`。独立开发运行（仅测试目录）：`python -X utf8 -m backend.v060.worker --data-root _debug/v060-test-data`；用户日常使用不需要手动后台进程。
 
-分析请求示例（`epoch` 要替换成当前 Unix 秒数）：
 
-```json
-{
-  "schema": 1,
-  "epoch": 1791000000,
-  "enabled": true,
-  "demo": true,
-  "stage": "idle",
-  "locationTrusted": false,
-  "config": {
-    "homeName": "家",
-    "workName": "公司",
-    "selectedPlan": 0,
-    "threshold": 10,
-    "anomalyNotice": true
-  },
-  "history": [{"durMin": 47, "plan": 0}]
-}
-```
+## 北京公交实时到站
 
-结果包含 `action: push_card | none`、标题、正文、理由、卡片 ID、阶段、预览标记、过期时间和状态。模型只允许生成建议，不能修改行程或路线。无密钥、网络异常、无效 JSON 和非法动作都有可见错误提示。不会把 MiniMax 上游响应或个人上下文写入日志。
+本机后台通过 `backend/v060/bus.py` 使用 `https://ts-api.tundrey.com` 的车来了封装 API，无需密钥。可在启动前设置 `BUS_API_BASE_URL` 为另一个 HTTPS 实例。网络请求由现有 Python 后台发起，Splash 页面只读写本机私有状态和命令文件。
 
-## 后台与推送范围
+服务配置新增“北京公交 API 接口”健康检查。当前行程会按公交线路、上车站、下车站顺序匹配北京城市 `027` 的线路方向和物理站台，直接使用线路详情提供的 WGS-84 坐标。准备出发、前往车站、候车及换乘阶段共享查询状态；地铁与纯步行不查询公交预测。未能唯一匹配的站台显示暂无预测。
 
-应用每3秒写 `ai-context.json`，后台读取并分析，原子写入 `ai-result.json`；应用每3秒读取结果。提交地点名称、方案、阈值、是否有可信定位和最近30条保存历史；不提交精确坐标或整份应用目录。开关默认关闭，关闭后停止提交给模型。
+卡片可见且 OctoSense 在前台时约每30秒查询一次；后台保留刷新命令并复用同一请求。只显示 `realData=true` 且 ETA 有效的预测，按秒数排序选择最近车辆。当前卡片展示车辆线路、方向、预计等待时长和车辆距离；接口的到站时刻、最近成功查询时间保留在后台，用于预测解析和数据过期判断。失败退避并遵守限流等待，90秒后标记过期，不把预测归零作为车辆实际到站或自动上车的证据。方向和行程变化后丢弃旧响应。
 
-同一上下文10分钟内不重复调用；模型调用至少间隔60秒；卡片至少间隔5分钟，同文案30分钟内去重。后台保存去重账本，重启保留限频。数据超过90秒拒绝分析，卡片10分钟过期，应用只接收阶段及预览标记匹配的卡片。卡片不会打断地点编辑或设置。
+验证：`python -X utf8 -m unittest backend.v060.test_v060 backend.v060.test_bus`。本机原生界面验证：`python -X utf8 _debug/visual-strict/bus-live-test.py --cards`，仅使用隔离测试目录，不改用户行程。已在2026-10-06实测良乡西门993路往西红门西站与往窦店公交场站两个方向。其他线路通过相同匹配流程查询，是否有预测取决于上游覆盖。
 
-这是**应用内卡片推送**。宿主关闭后不采集新位置，也不提供系统通知、锁屏或跨设备推送；后台仍可运行，但拒绝过期快照。路线、班次目前只有原型示例，AI 不能提供已验证的实时到站或延误。将来接入真实路线数据或系统卡片分发，需要对应数据源和宿主能力。
 
-## 验证
-
-```powershell
-python -m unittest discover -s backend -p 'test_*.py' -v
-node integrate-ai.cjs
-```
-
-`sync-prototypes.cjs` 已调用同一集成器，重新生成原型不会丢失 AI 功能。新 AI 界面使用 Noto Sans SC 字体子集，覆盖基本汉字区（U+4E00–U+9FFF）、拉丁字母和常用标点；生僻扩展汉字和 emoji 不在子集范围。许可证沿用 `bundle/assets` 中的 SIL OFL。
-
-接口、解析、文件桥、开关、过期、去重及上游失败通过本地测试。真实 MiniMax 回复需配置有效密钥后验证，本地测试不代表已验证线上模型质量。
+### AI preferences and memory (0.6.30)
+The habits page enables MiniMax and saves mode/route preferences. Selected options have a blue background. The route badge is shown only for a validated MiniMax recommendation; loading and failure are visible. Recommendation, summary, memory and assist use independent per-task limits, so recommendations do not delay the arrival summary. Empty summary responses are treated as failures and retried; a pending summary can resume after worker restart.
+AI memory is derived from up to 30 completed records and explicit preferences. Manual corrections and unusually short durations are identified as uncertain evidence. The memory result is persisted after the summary card is closed and included in route recommendation context. Clearing history also clears memory and rejects stale in-flight memory results. Direct cancellation creates neither a completed record nor a memory update.
+The shell closes the Onway main UI when a new trip card opens, keeping the shell-owned worker alive. Cancel and closing the arrival summary withdraw the card and open the main app at home.

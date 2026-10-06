@@ -1,0 +1,546 @@
+diff --git a/crates/shell/src/desktop_layout.rs b/crates/shell/src/desktop_layout.rs
+index 64ad41c..32c7cdf 100644
+--- a/crates/shell/src/desktop_layout.rs
++++ b/crates/shell/src/desktop_layout.rs
+@@ -2,6 +2,28 @@
+ //! destroys groups, split ratios, workspace membership, or an app instance.
+ use crate::layout::{ClientId, LRect};
+ 
++/// A person's preferred opening size; subsequent resize gestures stay free.
++/// Width and aspect apply to the whole outer frame, including its title bar.
++pub fn preferred_open_rect(app: &str, area: LRect) -> Option<LRect> {
++    if app == "hub:onway" && std::env::var_os("ONWAY_APP_DIR").is_some() {
++        let width = 480.0_f64.min((area.w - 48.0) * 0.48).min((area.h - 48.0) / 2.0_f64.sqrt());
++        return Some(LRect { x: area.x + 24.0, y: area.y + (area.h - width * 2.0_f64.sqrt()) * 0.5,
++            w: width, h: width * 2.0_f64.sqrt() });
++    }
++    let path = crate::octosense::paths::home().join("wm/window-sizes.json");
++    let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
++    let entry = settings.get(app)?;
++    opening_rect(entry.get("width")?.as_f64()?, entry.get("aspect")?.as_f64()?, area)
++}
++
++fn opening_rect(width: f64, aspect: f64, area: LRect) -> Option<LRect> {
++    if !width.is_finite() || !aspect.is_finite() || width < 80.0 || aspect <= 0.0 {
++        return None;
++    }
++    let width = width.min(area.w * 0.9).min(area.h * 0.9 * aspect);
++    Some(area.centered(width, width / aspect))
++}
++
+ #[derive(Clone, Debug)]
+ pub struct DesktopWindow {
+     pub client: ClientId,
+@@ -74,6 +96,15 @@ pub fn fit(mut r: LRect, area: LRect) -> LRect {
+ mod tests {
+     use super::*;
+     #[test]
++    fn preferred_opening_preserves_outer_ratio_on_small_desks() {
++        for area in [LRect::new(0., 30., 1400., 800.), LRect::new(0., 30., 320., 400.)] {
++            let rect = opening_rect(480., 1. / 2_f64.sqrt(), area).unwrap();
++            assert!((rect.h / rect.w - 2_f64.sqrt()).abs() < 1e-9);
++            assert!(rect.w <= area.w && rect.h <= area.h);
++        }
++        assert!(opening_rect(480., 0., LRect::new(0., 0., 1000., 800.)).is_none());
++    }
++    #[test]
+     fn maximize_and_minimize_keep_restore_rect_and_stack() {
+         let area = LRect::new(0.0, 30.0, 1200.0, 800.0);
+         let mut d = DesktopWindows::default();
+diff --git a/crates/shell/src/glance_card.rs b/crates/shell/src/glance_card.rs
+index 82947f2..7283468 100644
+--- a/crates/shell/src/glance_card.rs
++++ b/crates/shell/src/glance_card.rs
+@@ -647,6 +647,11 @@ script_mod! {
+         width: Fill height: Fill flow: Down
+         card := Splash { width: Fill height: Fit }
+     }
++    // Onway owns a scrollable body and a fixed action footer.
++    mod.widgets.GlanceOnwayFrame = View {
++        width: Fill height: Fill flow: Down clip_y: true clip_x: true
++        card := Splash { width: Fill height: Fill }
++    }
+ }
+ 
+ struct Tile {
+@@ -718,7 +723,7 @@ impl GlanceTiles {
+         if tile.frame.is_empty() {
+             let scroll = self.scroll;
+             tile.frame = cx.with_vm(|vm| {
+-                let value = if scroll { script_eval!(vm, { use mod.widgets.* GlanceSheetFrame {} }) } else { script_eval!(vm, { use mod.widgets.* GlanceTileFrame {} }) };
++                let value = if app == "onway" && key.ends_with("onway/current-trip") { script_eval!(vm, { use mod.widgets.* GlanceOnwayFrame {} }) } else if scroll { script_eval!(vm, { use mod.widgets.* GlanceSheetFrame {} }) } else { script_eval!(vm, { use mod.widgets.* GlanceTileFrame {} }) };
+                 WidgetRef::script_from_value(vm, value)
+             });
+             let splash = tile.frame.splash(cx, ids!(card));
+@@ -831,6 +836,11 @@ pub fn app_isolate(cx: &Cx, app: &str) -> Result<octosense_app_policy::IsolateSe
+         }
+     };
+     let mut settings = policy.isolate_settings(&root);
++    if app == "onway" && std::env::var_os("ONWAY_APP_DIR").is_some() {
++        if let Some((_, allowlist)) = crate::onway_background::asset_origin(&root) {
++            settings.hosts.push(allowlist);
++        }
++    }
+     settings.host_prompts = false;
+     std::fs::create_dir_all(&settings.jail_root).map_err(|e| format!("the app's storage: {e}"))?;
+     Ok(settings)
+diff --git a/crates/shell/src/glance_sheet.rs b/crates/shell/src/glance_sheet.rs
+index 8e526e5..0a08919 100644
+--- a/crates/shell/src/glance_sheet.rs
++++ b/crates/shell/src/glance_sheet.rs
+@@ -53,6 +53,13 @@ pub fn sheet_rect(screen: Rect, card_h: f64) -> Rect {
+     rect(screen.pos.x + (screen.size.x - w) * 0.5, screen.pos.y + (screen.size.y - h) * 0.5, w, h)
+ }
+ 
++/// Onway's initial 1:√2 card at the right; no backdrop or outside-click dismissal.
++pub fn onway_rect(screen: Rect) -> Rect {
++    let width = 480.0_f64.min((screen.size.x - 48.0) * 0.48).min((screen.size.y - 48.0) / 2.0_f64.sqrt()).max(200.0);
++    let height = width * 2.0_f64.sqrt();
++    rect(screen.pos.x + screen.size.x - width - 24.0, screen.pos.y + (screen.size.y - height) * 0.5, width, height)
++}
++
+ /// The ✕ in a window at `sheet`.
+ pub fn close_rect(sheet: Rect) -> Rect {
+     rect(sheet.pos.x + sheet.size.x - PAD - CLOSE + 4.0, sheet.pos.y + (HEADER - CLOSE) * 0.5 + 2.0, CLOSE, CLOSE)
+@@ -91,6 +98,10 @@ pub struct ShellGlanceSheet {
+     #[rust]
+     sheet: Rect,
+     #[rust]
++    onway_size: Option<Vec2d>,
++    #[rust]
++    resize_origin: Option<(Vec2d, Vec2d)>,
++    #[rust]
+     tiles: GlanceTiles,
+     /// An L0 card's live state (a script card keeps its own).
+     #[rust]
+@@ -106,6 +117,11 @@ pub struct ShellGlanceSheet {
+ }
+ 
+ impl ShellGlanceSheet {
++    pub fn is_onway(&self) -> bool {
++        self.open.as_ref().is_some_and(|o| o.key == "onway/current-trip")
++    }
++
++    pub fn contains_point(&self, point: Vec2d) -> bool { self.resize_origin.is_some() || contains(self.sheet, point) }
+     /// The key (`app/card_id`) of the open card.
+     pub fn open_key(&self) -> Option<&str> {
+         self.open.as_ref().map(|o| o.key.as_str())
+@@ -121,6 +137,7 @@ impl ShellGlanceSheet {
+         self.tiles.sweep(cx, &[]);
+         self.tiles = GlanceTiles::scrolling();
+         self.live.clear();
++        self.resize_origin = None;
+         self.live.body(&Self::tile_key(key), &card, "glance sheet");
+         self.open = Some(Open { key: key.to_string(), card });
+         log!("glance sheet: opened {key}");
+@@ -170,14 +187,25 @@ impl Widget for ShellGlanceSheet {
+         if let Some(open) = &self.open {
+             let tok = self.d.tokens(self.tokens);
+             let ink = tok.notifications.surface.text;
+-            self.d.solid(cx, screen, vec4(0.0, 0.0, 0.0, 0.55));
++            let pinned = open.key == "onway/current-trip";
++            if !pinned { self.d.solid(cx, screen, vec4(0.0, 0.0, 0.0, 0.55)); }
+             let card_h = crate::glance_card::measured_height(&Self::tile_key(&open.key)).unwrap_or(UNMEASURED_CARD);
+-            let sheet = sheet_rect(screen, card_h);
++            let mut sheet = if pinned { onway_rect(screen) } else { sheet_rect(screen, card_h) };
++            if pinned {
++                if let Some(size) = self.onway_size {
++                    sheet.size = dvec2(size.x.min(screen.size.x - 48.0).max(240.0), size.y.min(screen.size.y - 48.0).max(320.0));
++                    sheet.pos.x = screen.pos.x + screen.size.x - sheet.size.x - 24.0;
++                    sheet.pos.y = screen.pos.y + (screen.size.y - sheet.size.y) * 0.5;
++                }
++            }
+             self.sheet = sheet;
+             self.d.card(cx, sheet, &tok.notifications.surface);
+             let close = close_rect(sheet);
+             self.d.label_elided(cx, rect(sheet.pos.x + PAD + 4.0, sheet.pos.y + 4.0, sheet.size.x - PAD * 2.0 - CLOSE - 8.0, HEADER - 4.0), false, 12.0, alpha(ink, 0.7), HAlign::Left, &open.card.title);
+-            self.d.icon_centered(cx, Ico::Close, close, 14.0, ink);
++            if !pinned { self.d.icon_centered(cx, Ico::Close, close, 14.0, ink); }
++            if pinned {
++                self.d.label_elided(cx, rect(sheet.pos.x + 3.0, sheet.pos.y + sheet.size.y - 20.0, 36.0, 16.0), false, 10.0, alpha(ink, 0.5), HAlign::Left, "↙");
++            }
+             let card = card_rect(sheet);
+             let key = Self::tile_key(&open.key);
+             let body = self.live.body(&key, &open.card, "glance sheet");
+@@ -197,12 +225,33 @@ impl Widget for ShellGlanceSheet {
+         if self.open.is_none() {
+             return;
+         }
++        if self.is_onway() {
++            match event {
++                Event::MouseDown(e) if contains(rect(self.sheet.pos.x, self.sheet.pos.y + self.sheet.size.y - 24.0, 28.0, 24.0), e.abs) => {
++                    self.resize_origin = Some((e.abs, self.sheet.size));
++                    return;
++                }
++                Event::MouseMove(e) => {
++                    if let Some((start, size)) = self.resize_origin {
++                        self.onway_size = Some(dvec2((size.x + start.x - e.abs.x).max(240.0), (size.y + e.abs.y - start.y).max(320.0)));
++                        self.redraw(cx);
++                        return;
++                    }
++                }
++                Event::MouseUp(_) if self.resize_origin.is_some() => {
++                    self.resize_origin = None;
++                    self.redraw(cx);
++                    return;
++                }
++                _ => {}
++            }
++        }
+         match event {
+-            Event::MouseDown(e) if contains(close_rect(self.sheet), e.abs) || !contains(self.sheet, e.abs) => {
++            Event::MouseDown(e) if !self.is_onway() && (contains(close_rect(self.sheet), e.abs) || !contains(self.sheet, e.abs)) => {
+                 self.close(cx);
+                 return;
+             }
+-            Event::KeyDown(e) if e.key_code == KeyCode::Escape => {
++            Event::KeyDown(e) if !self.is_onway() && e.key_code == KeyCode::Escape => {
+                 self.close(cx);
+                 return;
+             }
+@@ -236,4 +285,14 @@ mod tests {
+         let small = sheet_rect(rect(0.0, 0.0, 360.0, 480.0), 600.0);
+         assert!(small.size.x <= 328.0 && small.size.y <= 448.0 && small.pos.x >= 16.0);
+     }
++
++    #[test]
++    fn onway_card_is_on_the_right_and_keeps_its_initial_aspect() {
++        let screen = rect(0.0, 0.0, 1440.0, 1000.0);
++        let card = onway_rect(screen);
++        assert_eq!(card.size.x, 480.0);
++        assert!((card.size.y / card.size.x - 2.0_f64.sqrt()).abs() < 0.001);
++        assert_eq!(card.pos.x + card.size.x, 1416.0);
++        assert!(card.pos.x > screen.size.x * 0.5);
++    }
+ }
+diff --git a/crates/shell/src/lib.rs b/crates/shell/src/lib.rs
+index 6d83e0a..be75ce4 100644
+--- a/crates/shell/src/lib.rs
++++ b/crates/shell/src/lib.rs
+@@ -81,6 +81,7 @@ pub mod glance_digest;
+ pub mod glance_notice;
+ pub mod glance_panel;
+ pub mod glance_sheet;
++pub mod onway_background;
+ use glance::NoteTargets as GlanceNoteTargets;
+ // The App derive takes a plain type name for a field.
+ use approvals::RequestNotices as ApprovalNotices;
+@@ -2585,6 +2586,13 @@ impl App {
+         let gap = self.state_mut().gap;
+         self.state_mut().layout.insert(id, area, gap);
+         // The tile is a module tile from its first draw; the root is seated
++        if !self.state_mut().style.target.mobile() {
++            if let Some(rect) = desktop_layout::preferred_open_rect(&app.id, area) {
++                if let Some(window) = self.state_mut().layout.desktop.get_mut(id) {
++                    window.rect = rect;
++                }
++            }
++        }
+         // in it before anything asks it to draw.
+         self.desk(cx).borrow_mut::<WmDesk>().map(|mut d| {
+             d.mark_module(id);
+@@ -3795,6 +3803,16 @@ impl App {
+         if !sheet.borrow::<glance_sheet::ShellGlanceSheet>().is_some_and(|s| s.is_open()) {
+             return false;
+         }
++        if sheet.borrow::<glance_sheet::ShellGlanceSheet>().is_some_and(|s| s.is_onway()) {
++            let inside = match event {
++                Event::MouseDown(e) => sheet.borrow::<glance_sheet::ShellGlanceSheet>().is_some_and(|s| s.contains_point(e.abs)),
++                Event::MouseUp(e) => sheet.borrow::<glance_sheet::ShellGlanceSheet>().is_some_and(|s| s.contains_point(e.abs)),
++                Event::MouseMove(e) => sheet.borrow::<glance_sheet::ShellGlanceSheet>().is_some_and(|s| s.contains_point(e.abs)),
++                Event::Scroll(e) => sheet.borrow::<glance_sheet::ShellGlanceSheet>().is_some_and(|s| s.contains_point(e.abs)),
++                _ => false,
++            };
++            if !inside { return false; }
++        }
+         sheet.handle_event(cx, event, &mut Scope::empty());
+         if matches!(event, Event::MouseDown(_) | Event::MouseUp(_)) {
+             self.redraw_all(cx);
+@@ -6565,10 +6583,12 @@ impl App {
+                 // Esc closes it.
+                 let sheet = self.ui.widget(cx, ids!(shell_glance_sheet));
+                 if sheet.borrow::<glance_sheet::ShellGlanceSheet>().is_some_and(|s| s.is_open()) {
++                    if !sheet.borrow::<glance_sheet::ShellGlanceSheet>().is_some_and(|s| s.is_onway()) {
+                     self.alt_armed = false;
+                     sheet.handle_event(cx, event, &mut Scope::empty());
+                     self.redraw_all(cx);
+                     return;
++                    }
+                 }
+                 // The shell menu grabs the keyboard while it is up.
+                 if self.shell_menu_key(cx, e) {
+@@ -6661,11 +6681,30 @@ impl App {
+             }
+             // Stop the octos kernel, if one runs, and let it release its data dir.
+             ai_host::shutdown();
++            onway_background::shutdown();
+         }
+         if let Event::Timer(te) = event {
+             self.fire_test_timers(cx, te);
+             if self.tick.is_timer(te).is_some() && self.state.is_some() {
+                 self.reap_exited(cx);
++                if onway_background::poll(cx) {
++                    if onway_background::hide_main_requested(cx) {
++                        // Only the main app UI ends; the shell-owned worker and live trip remain.
++                        let clients: Vec<_> = self.state_mut().clients.iter()
++                            .filter_map(|(&id, slot)| (slot.app == "hub:onway").then_some(id)).collect();
++                        for client in clients { self.close_client(cx, client, false); }
++                    }
++                    let sheet = self.ui.widget(cx, ids!(shell_glance_sheet));
++                    if !sheet.borrow::<glance_sheet::ShellGlanceSheet>().is_some_and(|s| s.is_onway()) {
++                        self.open_glance_card(cx, "onway/current-trip");
++                    }
++                } else {
++                    let sheet = self.ui.widget(cx, ids!(shell_glance_sheet));
++                    if sheet.borrow::<glance_sheet::ShellGlanceSheet>().is_some_and(|s| s.is_onway()) {
++                        if let Some(mut s) = sheet.borrow_mut::<glance_sheet::ShellGlanceSheet>() { s.close(cx); }
++                    }
++                }
++                if onway_background::open_main_requested(cx) { self.launch_app(cx, "hub:onway"); }
+                 self.poll_backgrounds(cx);
+                 self.drain_client_lines(cx);
+                 self.explain_first_exec_scan(cx);
+diff --git a/runtime-patches.lock.json b/runtime-patches.lock.json
+index d7682c7..3d98613 100644
+--- a/runtime-patches.lock.json
++++ b/runtime-patches.lock.json
+@@ -4,14 +4,15 @@
+     "base_revision": "c155f61d0e1600d2ec474209374444a38a09a470",
+     "patch": "tools/runtime-patches/makepad-settings.patch",
+     "sha256": "b17352ebf59e50ab3db6ff1cb825c4e006bcdff47d83522e372b8fe585e57570",
+-    "tree": "3eadf628ee75eb4c9b672446bf14c7b95d9f0f5b",
++    "tree": "e746e4de4a5302d2d7d1f61dccdf2b052c53a17b",
+     "product_fixes": [
+       "Settings integration: Android IME synchronization, accessibility and reduced motion, GLES program-cache validation, obscured-gesture cancellation and scroll-position observation.",
+       "Contained-app isolation and secret-input restrictions come from the pinned upstream runtime; the Settings overlay preserves those gates.",
+       "System Back callback owners suppress compatibility Back keys to avoid duplicate navigation on Android 13+.",
+       "A cancelled search's keyboard hides once: an editor session going inactive retires its input connection without restarting input, which brought the keyboard back empty while it was hiding (Android 11).",
+       "Windows remote grabs send raw RGBA pixels to the bounded PNG worker before presenting, keeping full-size encoding off the UI thread and scaling before encoding.",
+-      "Windows frame completion: backport Makepad work c508ab0c8 GPU completion polls around native and hosted repaint so upload buffers can retire."
++      "Windows frame completion: backport Makepad work c508ab0c8 GPU completion polls around native and hosted repaint so upload buffers can retire.",
++      "Windows location: lazily request OS consent for granted readers, subscribe to real fixes, expose source timestamps and provider status, and reject expired positions without logging coordinates."
+     ],
+     "stacked": [
+       {
+@@ -29,6 +30,10 @@
+       {
+         "patch": "tools/runtime-patches/makepad-windows-frame-completion.patch",
+         "sha256": "8d58e16bc12aae5f4313fdc5c9d3f6944b96ee20e609fe5ff069fe2403954595"
++      },
++      {
++        "patch": "tools/runtime-patches/makepad-windows-location.patch",
++        "sha256": "f09215d907e76e65d3812d0e0d5faf848c786d4a9dc3b937f895e31618ecf6bb"
+       }
+     ]
+   }
+diff --git a/tools/kernel-artifact.py b/tools/kernel-artifact.py
+index 06e7dd7..0b71f48 100755
+--- a/tools/kernel-artifact.py
++++ b/tools/kernel-artifact.py
+@@ -161,7 +161,8 @@ def receipt(kernel, source):
+ def version_matches(version, revision):
+     """`octos 2.0.3-rc.13 (ae230ce 2026-10-01)`: octos's `--version` names
+     the short commit it was built from."""
+-    match = re.fullmatch(r"octos \S+ \(([0-9a-f]{7,40})(?: \d{4}-\d{2}-\d{2})?\)", version.strip())
++    # Some Windows builds leave the optional Git date blank, including its space.
++    match = re.fullmatch(r"octos \S+ \(([0-9a-f]{7,40})(?: \d{4}-\d{2}-\d{2})?[ \t]*\)", version.strip())
+     return bool(match and revision.startswith(match[1]))
+ 
+ 
+diff --git a/tools/test_kernel_artifact.py b/tools/test_kernel_artifact.py
+index 84da049..5f45abd 100644
+--- a/tools/test_kernel_artifact.py
++++ b/tools/test_kernel_artifact.py
+@@ -133,6 +133,18 @@ class PlanTests(unittest.TestCase):
+                 kernel.main(["--kernel", "/k/octos", "--no-kernel"])
+ 
+ 
++class VersionTests(unittest.TestCase):
++    def test_the_version_must_name_the_locked_revision(self):
++        self.assertTrue(kernel.version_matches(f"octos 2.0.3-rc.13 ({REV[:7]} 2026-10-01)", REV))
++        self.assertTrue(kernel.version_matches(f"octos 2.0.3 ({REV[:9]})", REV))
++        self.assertTrue(kernel.version_matches(f"octos 2.0.3-rc.13 ({REV[:7]} )", REV))
++        self.assertFalse(kernel.version_matches("octos 2.0.3-rc.13 (0000000 )", REV))
++        self.assertFalse(kernel.version_matches(f"octos 2.0.3 ({REV[:7]} not-a-date)", REV))
++        self.assertFalse(kernel.version_matches("octos 2.0.3-rc.13 (0000000 2026-10-01)", REV))
++        self.assertFalse(kernel.version_matches("octos 2.0.3", REV))
++        self.assertFalse(kernel.version_matches(f"something else ({REV[:7]})", REV))
++
++
+ @unittest.skipIf(os.name == "nt", "the stand-in kernel is a POSIX shell script")
+ class StageTests(unittest.TestCase):
+     """--stage: the desktop's packaged kernel and the receipt
+@@ -144,13 +156,6 @@ class StageTests(unittest.TestCase):
+         program.chmod(0o755)
+         return program
+ 
+-    def test_the_version_must_name_the_locked_revision(self):
+-        self.assertTrue(kernel.version_matches(f"octos 2.0.3-rc.13 ({REV[:7]} 2026-10-01)", REV))
+-        self.assertTrue(kernel.version_matches(f"octos 2.0.3 ({REV[:9]})", REV))
+-        self.assertFalse(kernel.version_matches("octos 2.0.3-rc.13 (0000000 2026-10-01)", REV))
+-        self.assertFalse(kernel.version_matches("octos 2.0.3", REV))
+-        self.assertFalse(kernel.version_matches(f"something else ({REV[:7]})", REV))
+-
+     def test_a_staged_kernel_carries_its_revision_and_hash(self):
+         with tempfile.TemporaryDirectory() as temp:
+             source = self.stand_in(temp, f"octos 2.0.3-rc.13 ({REV[:7]} 2026-10-01)")
+diff --git a/crates/shell/src/onway_background.rs b/crates/shell/src/onway_background.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/shell/src/onway_background.rs
+@@ -0,0 +1,155 @@
++//! Optional local Onway companion. Enabled only by the local launcher, gated by
++//! the admitted app's policy. The shell owns its lifetime; no window owns trips.
++use makepad_widgets::*;
++use serde_json::{json, Value};
++use std::path::PathBuf;
++use std::process::{Child, Command, Stdio};
++use std::sync::{Mutex, OnceLock};
++
++#[derive(Default)]
++struct Supervisor {
++    child: Option<Child>,
++    last_spawn: u64,
++    published: bool,
++    last_publish: u64,
++    gps_timestamp: f64,
++    opened_request: String,
++    hidden_trip: String,
++}
++
++static WORKER: OnceLock<Mutex<Supervisor>> = OnceLock::new();
++
++#[cfg(any(feature = "app-hub", native_mobile))]
++static ASSETS: OnceLock<Mutex<Option<octosense_app_policy::AssetServer>>> = OnceLock::new();
++
++/// Bundle artwork gets the same narrow loopback exception as the Card runner.
++#[cfg(any(feature = "app-hub", native_mobile))]
++pub fn asset_origin(root: &std::path::Path) -> Option<(String, String)> {
++    let mut assets = ASSETS.get_or_init(|| Mutex::new(None)).lock().ok()?;
++    if assets.is_none() {
++        *assets = octosense_app_policy::AssetServer::start_with_static(&root.join("onway/bundle"), &[]).ok();
++    }
++    assets.as_ref().map(|server| (server.origin().to_string(), server.allowlist_entry()))
++}
++
++fn read(path: PathBuf) -> Value {
++    std::fs::read(path).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or(Value::Null)
++}
++
++fn seconds() -> u64 {
++    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
++}
++
++/// Return whether the current card should be opened at the right of the desk.
++#[cfg(any(feature = "app-hub", native_mobile))]
++pub fn poll(cx: &Cx) -> bool {
++    let Some(app_dir) = std::env::var_os("ONWAY_APP_DIR").map(PathBuf::from) else { return false };
++    let root = octosense_app_hub_app::data_root(cx);
++    let Ok(policy) = crate::glance_card::app_isolate(cx, "onway") else { return false };
++    if !policy.capabilities.iter().any(|c| c == "glance") { return false; }
++    let mut worker = WORKER.get_or_init(|| Mutex::new(Supervisor::default())).lock().unwrap();
++    let now = seconds();
++    if worker.child.as_mut().is_some_and(|c| c.try_wait().ok().flatten().is_some()) {
++        worker.child = None;
++    }
++    if worker.child.is_none() && now.saturating_sub(worker.last_spawn) > 30 {
++        worker.last_spawn = now;
++        let python = std::env::var_os("ONWAY_PYTHON").unwrap_or_else(|| "python".into());
++        let mut cmd = Command::new(python);
++        cmd.args(["-X", "utf8", "-m", "backend.v060.worker", "--data-root"])
++            .arg(&root).arg("--parent-pid").arg(std::process::id().to_string())
++            .current_dir(&app_dir).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
++        #[cfg(target_os = "windows")]
++        {
++            use std::os::windows::process::CommandExt;
++            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
++        }
++        match cmd.spawn() {
++            Ok(child) => { worker.child = Some(child); log!("onway: local companion started"); }
++            Err(_) => log!("onway: could not start the local companion; check the launcher runtime"),
++        }
++    }
++    let data = root.join("onway");
++    let cfg = read(data.join("cfg-v060.json"));
++    if cfg["tracking"].as_bool() == Some(true) && policy.capabilities.iter().any(|c| c == "location") {
++        makepad_platform::gps::request_location();
++        let fix = makepad_platform::gps::last_gps_fix();
++        let timestamp = fix.map(|p| p.timestamp).unwrap_or(0.0);
++        let mut position = json!({"system":"wgs84", "status":makepad_platform::gps::location_status(), "timestamp": timestamp});
++        if let Some(p) = fix {
++            position["lat"] = json!(p.lat);
++            position["lon"] = json!(p.lon);
++            position["accuracy"] = json!(p.acc);
++        }
++        // Preserve the SOURCE timestamp. Polling a cached fix does not make it new.
++        let tmp = data.join("device-location.tmp");
++        if std::fs::write(&tmp, position.to_string()).is_ok() {
++            let _ = std::fs::rename(&tmp, data.join("device-location.json"));
++        }
++        worker.gps_timestamp = timestamp;
++    } else {
++        let _ = std::fs::remove_file(data.join("device-location.json"));
++    }
++    let state = read(data.join("view-state.json"));
++    let visible = state["cardVisible"].as_bool() == Some(true);
++    if visible && (!worker.published || now.saturating_sub(worker.last_publish) >= 3600) {
++        if let Ok(script) = std::fs::read_to_string(app_dir.join("card-v060.splash")) {
++            let Some((origin, _)) = asset_origin(&root) else { return false };
++            let script = script.replace("{{assets}}", &origin);
++            let args = json!({"card_id":"current-trip", "title":"在途 · 当前行程", "script":script,
++                "priority":60, "expires":7200, "notify":false, "open":{"app":"onway"}});
++            let caller = crate::glance::Caller::Contained { app:"onway".into(), granted:true };
++            if crate::glance::request(&caller, "glance.publish", &args).is_ok() {
++                worker.published = true;
++                worker.last_publish = now;
++            }
++        }
++    } else if !visible && worker.published {
++        let _ = crate::glance::request(&crate::glance::Caller::granted("onway"), "glance.withdraw", &json!({"card_id":"current-trip"}));
++        worker.published = false;
++    }
++    visible && worker.published
++}
++
++#[cfg(not(any(feature = "app-hub", native_mobile)))]
++pub fn poll(_cx: &Cx) -> bool { false }
++
++#[cfg(any(feature = "app-hub", native_mobile))]
++pub fn open_main_requested(cx: &Cx) -> bool {
++    if std::env::var_os("ONWAY_APP_DIR").is_none() { return false; }
++    let nav = read(octosense_app_hub_app::data_root(cx).join("onway/view-state.json"))["navigation"].clone();
++    let Some(id) = nav["id"].as_str() else { return false; };
++    if nav["expires"].as_f64().unwrap_or(0.0) <= seconds() as f64 { return false; }
++    let mut worker = WORKER.get_or_init(|| Mutex::new(Supervisor::default())).lock().unwrap();
++    if worker.opened_request == id { return false; }
++    worker.opened_request = id.into();
++    true
++}
++
++#[cfg(not(any(feature = "app-hub", native_mobile)))]
++pub fn open_main_requested(_cx: &Cx) -> bool { false }
++
++pub fn shutdown() {
++    if let Some(worker) = WORKER.get() {
++        if let Ok(mut worker) = worker.lock() {
++            if let Some(mut child) = worker.child.take() {
++                let _ = child.kill();
++                let _ = child.wait();
++            }
++        }
++    }
++}
++
++#[cfg(any(feature = "app-hub", native_mobile))]
++pub fn hide_main_requested(cx: &Cx) -> bool {
++    if std::env::var_os("ONWAY_APP_DIR").is_none() { return false; }
++    let state = read(octosense_app_hub_app::data_root(cx).join("onway/view-state.json"));
++    let Some(id) = state["trip"]["id"].as_str() else { return false; };
++    let mut worker = WORKER.get_or_init(|| Mutex::new(Supervisor::default())).lock().unwrap();
++    if !worker.published || worker.hidden_trip == id { return false; }
++    worker.hidden_trip = id.into();
++    true
++}
++
++#[cfg(not(any(feature = "app-hub", native_mobile)))]
++pub fn hide_main_requested(_cx: &Cx) -> bool { false }

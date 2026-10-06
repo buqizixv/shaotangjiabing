@@ -8,6 +8,9 @@ _debug/
 __pycache__/
 .env
 .env.*
+gateway/secrets.env
+gateway/*.key
+gateway/*.sqlite3*
 ai-context.json
 ai-result.json
 ai-ledger.json
@@ -15,9 +18,15 @@ ai-enabled.txt
 ai-seen.txt
 dev-navigation.txt
 
-node_modules/
+*.dpapi
+*.pem.key
+installed/
 accounts/
 cache/
-cfg.json
-hist.json
-*.log
+cfg*.json
+hist*.json
+state*.json
+view-state.json
+worker-health.json
+commands/
+gateway-host-key.json

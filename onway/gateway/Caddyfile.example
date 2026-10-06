@@ -1,0 +1,7 @@
+# Replace gateway.example.com with your gateway domain. DNS must point to the server.
+gateway.example.com {
+    request_body {
+        max_size 96KB
+    }
+    reverse_proxy 127.0.0.1:8080
+}
