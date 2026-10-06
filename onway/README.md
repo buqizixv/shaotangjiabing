@@ -12,9 +12,9 @@
 
 [![Onway 桌面演示：出发邀请与主应用](docs/media/onway-demo-preview.jpg)](https://github.com/buqizixv/shaotangjiabing/releases/download/onway-v1.0.2/Onway-Introduction.mp4)
 
-**[观看或下载 Onway 视频介绍（约 6 分 34 秒）](https://github.com/buqizixv/shaotangjiabing/releases/download/onway-v1.0.2/Onway-Introduction.mp4)**
+**[观看或下载 Onway 视频介绍（约 4 分 11 秒）](https://github.com/buqizixv/shaotangjiabing/releases/download/onway-v1.0.2/Onway-Introduction.mp4)**
 
-视频为项目作者录制的 Windows 桌面操作，保留原声、界面与数据，展示 AI 出发邀请、路线选择、动态行程、阶段纠正、AI 总结及出行习惯等流程。行程阶段包含人工操作演示，录屏不作为完整户外定位实测证据。它是完整版介绍，未剪成三分钟赛事短片。
+视频为项目作者新录制的 Windows 桌面讲解与操作演示，保留原声和实际界面。行程阶段包含人工操作演示，录屏不作为完整户外定位实测证据。
 
 ## “意图即应用”体现在哪里
 

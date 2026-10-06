@@ -15,7 +15,7 @@
 
 ## 在途 Onway：从准备出发到到达
 
-**[观看 Onway 项目介绍（约 6 分 34 秒）](https://github.com/buqizixv/shaotangjiabing/releases/download/onway-v1.0.2/Onway-Introduction.mp4)** · [v1.0.2 资料与视频](https://github.com/buqizixv/shaotangjiabing/releases/tag/onway-v1.0.2)
+**[观看 Onway 项目介绍（约 4 分 11 秒）](https://github.com/buqizixv/shaotangjiabing/releases/download/onway-v1.0.2/Onway-Introduction.mp4)** · [v1.0.2 资料与视频](https://github.com/buqizixv/shaotangjiabing/releases/tag/onway-v1.0.2)
 
 桌面录屏展示出发邀请、路线选择、动态卡片和 AI 总结；保留原声与操作，包含人工纠正演示，不作为完整户外实测证据。
 
