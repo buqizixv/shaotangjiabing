@@ -11,7 +11,7 @@
   },
   "id": "onway",
   "integrity": {
-    "bundle_blake3": "7de26363bf7a59cc497b5968fbc941094c9bfc033fe343ade268a435caf3c502",
+    "bundle_blake3": "4b7104433d3facc0151733e3359be16fb2be2fb4af6a6680234da49a9c88036f",
     "signature": null
   },
   "name": "在途",
@@ -22,5 +22,5 @@
   "storage": {
     "max_bytes": null
   },
-  "version": "1.0.1"
+  "version": "1.0.2"
 }

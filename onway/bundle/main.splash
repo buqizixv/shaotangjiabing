@@ -36,6 +36,8 @@ let serial = 0
 let pending = ""
 let navigationSeen = ""
 let expandedRoute = ""
+let backendDeadline = time_now() + 12
+let backendUnavailable = false
 
 fn send(action, payload){
     serial = serial + 1
@@ -80,7 +82,10 @@ fn saveHabits(){
 }
 fn poll(){
     if fs.exists("worker-health.json") {health=fs.read("worker-health.json").parse_json()}
-    if fs.exists("view-state.json") == false {return}
+    if fs.exists("view-state.json") == false {
+        if backendUnavailable == false && time_now() >= backendDeadline {backendUnavailable=true;ui.board.render()}
+        return
+    }
     let fresh=fs.read("view-state.json").parse_json()
     if fresh == nil || fresh.schema != 6 {return}
     let changed = state == nil || fresh.revision != state.revision
@@ -125,9 +130,10 @@ board := View{width: Fill height: Fill flow: Down spacing: 0 on_render: || {
 if state == nil {
     View{width: Fill height: Fill flow: Down padding: 24 spacing: 20
         Heading{text: "在途"}
-        BodyText{text: "正在连接本机后台…"}
-        Caption{text: "请通过项目中的运行在途启动脚本打开应用。"}
-        Secondary{text: "重新检查" on_click: || poll()}
+        BodyText{text: if backendUnavailable {"此宿主尚未接入在途后台"} else {"正在连接本机后台…"}}
+        Caption{text: "当前完整功能需要在途 Windows 演示包中的配套后台。单独安装脚本包暂不能完成路线查询与行程管理。"}
+        Caption{text: "请使用项目 Releases 中的 Windows 演示包。App Hub 接入正在申请人工审核。"}
+        Secondary{text: "重新检查" on_click: || {backendDeadline=time_now()+12;backendUnavailable=false;poll();ui.board.render()}}
     }
 } else {
     View{width: Fill height: if page == "home" {67} else {64} flow: Right padding: Inset{left: 24 right: 24 top: 8 bottom: 8} align: Align{y: 0.5}

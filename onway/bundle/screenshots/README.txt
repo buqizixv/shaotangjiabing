@@ -1,1 +1,4 @@
-Archived early-development interface captures; current v1.0.0 interface is defined by main.splash and card-v060.splash. These are not current version evidence.
+1.0.2 真实原生截图，600x880 布局尺寸。
+01-home：当前源码启动 Python 配套后台后的首页；不代表普通商店安装验证。
+02-compatibility：无配套后台的参考 card-host 页面，显示依赖说明。
+两次运行使用独立测试数据目录；未修改个人历史。
