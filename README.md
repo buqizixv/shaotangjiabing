@@ -10,10 +10,14 @@
 
 | 应用 | 解决的问题 | 当前交付 | 入口 |
 | --- | --- | --- | --- |
-| **在途 Onway** | 什么时候出发、怎样到站、在哪里下车，以及如何结束和记录一次行程 | v1.0.2 审核源码；v1.0.1 Windows 即用演示包 | [项目说明](onway/README.md) · [下载演示包](https://github.com/buqizixv/shaotangjiabing/releases/tag/onway-v1.0.1) |
+| **在途 Onway** | 什么时候出发、怎样到站、在哪里下车，以及如何结束和记录一次行程 | v1.0.2 审核源码与演示视频；v1.0.1 Windows 即用演示包 | [项目说明](onway/README.md) · [下载演示包](https://github.com/buqizixv/shaotangjiabing/releases/tag/onway-v1.0.1) |
 | **Daycast** | 天气对穿衣、活动和日程有什么影响，如何结合个人资料做安排 | v0.4.2 OctoSense 应用包 | [项目说明](octoscript-weather-assistant/README.md) · [下载应用包](https://github.com/buqizixv/shaotangjiabing/releases/tag/v0.4.2) |
 
 ## 在途 Onway：从准备出发到到达
+
+**[观看 Onway 项目介绍（约 6 分 34 秒）](https://github.com/buqizixv/shaotangjiabing/releases/download/onway-v1.0.2/Onway-Introduction.mp4)** · [v1.0.2 资料与视频](https://github.com/buqizixv/shaotangjiabing/releases/tag/onway-v1.0.2)
+
+桌面录屏展示出发邀请、路线选择、动态卡片和 AI 总结；保留原声与操作，包含人工纠正演示，不作为完整户外实测证据。
 
 在途用随行程阶段变化的卡片，呈现当下需要的出行信息。用户输入目的地或选择常用地点，比较真实查询得到的路线，再自主选择方案。进入行程后，信息重点随步行、候车、乘车和到达而变化。
 

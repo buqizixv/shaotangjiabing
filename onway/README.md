@@ -1,6 +1,38 @@
 # 在途 Onway v1.0.2
 
-从准备出发到到达，用动态卡片呈现当下需要的出行信息。这是运行于 Windows OctoSense 的独立项目源码，不包含框架源码、编译产物或个人运行数据。
+**少糖加冰团队｜从准备出发到到达，呈现当下所需。**
+
+在途 Onway 是围绕 OctoSense 开发的出行助手。用户输入目的地或保存固定通勤，应用结合路线、天气和偏好提供方案，并用随阶段变化的卡片呈现步行、候车、乘车和到达信息。
+
+当前源码与审核资料版本为 **1.0.2**；可解压运行的 Windows 演示包版本为 **1.0.1**。1.0.2 主要补齐提交资料及后台依赖说明，没有另外发布 1.0.2 Windows 可执行包。
+
+[视频介绍](#视频介绍) · [下载 Windows 演示包](https://github.com/buqizixv/shaotangjiabing/releases/tag/onway-v1.0.1) · [最新版本资料](https://github.com/buqizixv/shaotangjiabing/releases/tag/onway-v1.0.2) · [隐私说明](PRIVACY.md)
+
+## 视频介绍
+
+[![Onway 桌面演示：出发邀请与主应用](docs/media/onway-demo-preview.jpg)](https://github.com/buqizixv/shaotangjiabing/releases/download/onway-v1.0.2/Onway-Introduction.mp4)
+
+**[观看或下载 Onway 视频介绍（约 6 分 34 秒）](https://github.com/buqizixv/shaotangjiabing/releases/download/onway-v1.0.2/Onway-Introduction.mp4)**
+
+视频为项目作者录制的 Windows 桌面操作，保留原声、界面与数据，展示 AI 出发邀请、路线选择、动态行程、阶段纠正、AI 总结及出行习惯等流程。行程阶段包含人工操作演示，录屏不作为完整户外定位实测证据。它是完整版介绍，未剪成三分钟赛事短片。
+
+## “意图即应用”体现在哪里
+
+1. **通勤意图 → 出发邀请。** 用户保存家、公司、上下班时间和日期。在宿主运行、AI/提醒/定位开启且位置有效的条件下，程序依据时间、位置和通勤设置形成候选意图，查询路线与天气，再由 AI 给出建议，呈现可确认、拒绝或稍后处理的出发卡。
+2. **目的地 → 路线方案。** 输入目的地或选择常用地点后，查询实际路线并比较时长、步行和换乘；有效的 AI 建议在已有方案上显示推荐标记，最终由用户选择。
+3. **当前阶段 → 当前卡片。** 同一个出行目标，随着准备、步行、候车、乘车、到达，显示对应信息和操作。
+4. **完成记录 → 后续建议的上下文。** 开启 AI 时，行程总结与个性化记忆为下一次路线和通勤建议提供参考。
+
+卡片由已有脚本和后台按状态切换。这是对意图驱动服务的探索，不声称 AI 在现场生成并安装全新应用。
+
+## 立即体验
+
+1. 打开 [onway-v1.0.1 发布页](https://github.com/buqizixv/shaotangjiabing/releases/tag/onway-v1.0.1)，下载 `Onway-v1.0.1-Windows-x64.zip`。
+2. 完整解压，双击 `Onway.exe`。演示包包含配套宿主、Python、资源和共享网关访问凭证，无需自行填写网关凭证。
+3. 允许系统定位或手动设置起点，搜索目的地并选择方案。
+4. 在“出行习惯”开启 AI 功能；自动通勤邀请还需要提醒与定位开启、有效位置和符合通勤条件。可先在首页预览推荐卡片。
+
+地图、天气、公交与 AI 需要网络和可用上游服务。
 
 ## 当前功能
 
@@ -29,7 +61,7 @@ python -X utf8 -m unittest gateway.test_server backend.v060.test_gateway backend
 
 ## 服务与密钥
 
-`gateway-client.json` 只有地址，`gateway-ca.pem` 是公开自签证书信任文件，可以分发。首次使用者仍需自己的网关访问凭证，运行 `python -m backend.v060.configure_gateway` 配置。凭证存入当前 Windows 用户的 `%LOCALAPPDATA%/Onway/credentials.dpapi`，不会随源码分发。
+`gateway-client.json` 只有地址，`gateway-ca.pem` 是公开自签证书信任文件。源码自行运行需要配置网关访问凭证，可运行 `python -m backend.v060.configure_gateway`；凭证使用 Windows 用户级 DPAPI 保存。即用演示包另含共享访问凭证，不需要用户填写；源码和 App Hub bundle 不包含该共享令牌。
 
 MiniMax 和地图密钥只放服务器；独立部署见 [gateway/README.md](gateway/README.md)。不要提交 secrets.env、私钥、访问令牌或 DPAPI 文件。网关失败不会自动回落绕过额度。
 
@@ -45,6 +77,14 @@ MiniMax 和地图密钥只放服务器；独立部署见 [gateway/README.md](gat
 
 Windows 演示包内置宿主、Python 和独立共享网关凭证，解压后打开 Onway.exe，不需填写凭证。源码不包含该共享凭证；修改网关地址不会把包内凭证发给其他服务器。演示网关按用户授权取消调用次数额度，保留请求大小和并发约束。演示包使用定制宿主，不等于标准 App Hub 安装即可获得全部功能。
 
+演示包的本机数据位于 `%LOCALAPPDATA%/OnwayDemo/` 下的版本目录。共享服务的上游限制、并发约束或故障仍可能影响可用性，不保证无限可用或永久在线。数据处理与删除边界见 [隐私说明](PRIVACY.md)。
+
 ## v1.0.2 审核资料
 
 补齐真实原生截图、发布者资料及 [隐私说明](PRIVACY.md)。没有配套后台的参考宿主运行 12 秒后明确显示依赖原因，避免持续展示连接中。截图分别展示当前源码配套后台首页与无后台的依赖页面，测试数据与个人运行数据隔离。完整检查输出与自检回答见 [审核目录](docs/apphub-review/)。原 v1.0.1 Windows 演示包继续可用；本次未改动后台业务或网关，也未修改个人历史。
+
+[App Hub 人工审核申请 #102](https://github.com/OctoSense-org/OctoSense-App-Hub/issues/102) 已提交，尚未获准上架。1.0.2 审核包和 `onway-v1.0.2` 标签保持冻结；标签统一加上前缀后，冻结 listing 中指向旧 `v1.0.2` 标签的隐私链接失效，审核 Issue 已披露。当前有效说明为 [本目录隐私文档](PRIVACY.md)，后续适配版本需修正元数据地址。
+
+## 反馈与许可证
+
+[提交问题](https://github.com/buqizixv/shaotangjiabing/issues) 时注明 Onway、应用与宿主版本、复现步骤。不要粘贴 API 密钥、访问凭证或私钥。项目使用 [Apache-2.0](../LICENSE)，运行环境、字体和依赖的许可证以各自声明为准。
