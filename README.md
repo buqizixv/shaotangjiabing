@@ -41,6 +41,10 @@
 
 ## Daycast：让天气进入今天的安排
 
+**[观看 Daycast 视频介绍 · Daycast-Onway-promo-remix（2 分 40 秒）](https://github.com/buqizixv/shaotangjiabing/releases/download/v0.4.3/Daycast-Onway-promo-remix.mp4)**
+
+宣传视频包含 Daycast 与 Onway 的内容，独立于上方的 Onway 桌面操作介绍。
+
 Daycast 将天气、衣橱、偏好、日程和家庭关注城市放在一起，帮助用户回答“今天怎么安排”。它通过 OctoSense 助手处理自然语言，给出建议或待确认草案；新增个人资料由用户确认后保存。
 
 - **天气与城市：**查看当前天气、小时和未来预报；搜索、保存并切换关注地点。

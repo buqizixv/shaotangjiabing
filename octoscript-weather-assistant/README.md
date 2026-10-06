@@ -1,5 +1,12 @@
 # Daycast｜让天气进入今天的安排
 
+## 视频介绍
+
+**[观看或下载 Daycast-Onway-promo-remix（2 分 40 秒）](https://github.com/buqizixv/shaotangjiabing/releases/download/v0.4.3/Daycast-Onway-promo-remix.mp4)**
+
+Daycast 与 Onway 宣传视频。视频中的宣传画面与演示内容不作为完整户外实测或跨应用联动已实现的证明。
+
+
 Daycast 是运行在 OctoSense 上的天气与日程助手。它将实时天气、个人衣橱、天气偏好、日程与家庭关注城市放进同一条生活决策链：先理解环境和个人情况，再给出可执行的建议；需要修改个人资料时，先展示草案，由用户确认。
 
 ## 一句话介绍
