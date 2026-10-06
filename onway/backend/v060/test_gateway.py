@@ -1,11 +1,31 @@
 import os
 import json
 import unittest
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 from .services import Amap,MiniMax,ServiceError
 from .test_v060 import FakeVault
 
 class GatewayClientTests(unittest.TestCase):
+    def test_packaged_access_works_without_user_setup_and_is_bound_to_url(self):
+        from .gateway_client import GatewayClient
+        with tempfile.TemporaryDirectory() as directory:
+            config=Path(directory)/'gateway-client.json'
+            config.write_text(json.dumps({'url':'https://demo.example'}))
+            (config.parent/'gateway-access.json').write_text(json.dumps({'url':'https://demo.example','token':'packaged-demo-token-0123456789'}))
+            calls=[]
+            def transport(url,payload,headers,**options):
+                calls.append(headers);return {'ok':True,'data':{}}
+            with patch.dict(os.environ,{'ONWAY_GATEWAY_URL':'https://demo.example'}):
+                client=GatewayClient(FakeVault({}),transport,config)
+                self.assertTrue(client.configured);client.call('amap',{})
+                self.assertEqual(calls[-1]['Authorization'],'Bearer packaged-demo-token-0123456789')
+                client=GatewayClient(FakeVault({'gateway':'personal-token'}),transport,config)
+                client.call('amap',{})
+                self.assertEqual(calls[-1]['Authorization'],'Bearer personal-token')
+            with patch.dict(os.environ,{'ONWAY_GATEWAY_URL':'https://other.example'}):
+                self.assertFalse(GatewayClient(FakeVault({}),transport,config).configured)
     def test_summary_prompt_requires_summary_even_without_candidates(self):
         calls=[]
         def transport(url,payload,headers):

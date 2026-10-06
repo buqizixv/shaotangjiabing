@@ -7,14 +7,22 @@ from urllib.parse import urlsplit
 
 
 class GatewayClient:
-    def __init__(self, vault, transport):
+    def __init__(self, vault, transport, config_path=None):
         self.vault, self.transport = vault, transport
-        config = Path(__file__).resolve().parents[2] / 'gateway-client.json'
+        config = Path(config_path) if config_path else Path(__file__).resolve().parents[2] / 'gateway-client.json'
         try:
             default = json.loads(config.read_text(encoding='utf-8')).get('url', '')
         except (OSError, ValueError):
             default = ''
         self.url = os.getenv('ONWAY_GATEWAY_URL', default).strip().rstrip('/')
+        self.packaged_token = ''
+        try:
+            access = json.loads((config.parent / 'gateway-access.json').read_text(encoding='utf-8'))
+            token = access.get('token', '')
+            if access.get('url', '').rstrip('/') == self.url == default.rstrip('/') and isinstance(token, str) and 24 <= len(token) <= 256:
+                self.packaged_token = token
+        except (OSError, ValueError, AttributeError):
+            pass
         self.ca = os.getenv('ONWAY_GATEWAY_CA', '')
         bundled_ca = config.parent / 'gateway-ca.pem'
         if not self.ca and bundled_ca.exists():
@@ -30,11 +38,11 @@ class GatewayClient:
 
     @property
     def configured(self):
-        return self.enabled and bool(self.vault.get('gateway'))
+        return self.enabled and bool(self.vault.get('gateway') or self.packaged_token)
 
     def call(self, operation, payload):
         from .services import ServiceError
-        token = self.vault.get('gateway')
+        token = self.vault.get('gateway') or self.packaged_token
         if not token:
             raise ServiceError('网关访问凭证未配置')
         if operation not in {'amap', 'ai'}:

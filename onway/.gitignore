@@ -30,3 +30,5 @@ view-state.json
 worker-health.json
 commands/
 gateway-host-key.json
+
+gateway-access.json

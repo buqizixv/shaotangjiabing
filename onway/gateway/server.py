@@ -43,8 +43,8 @@ class Quota:
     def __init__(self, path, limits=None, clock=time.time):
         self.path, self.clock = str(path), clock
         self.limits = limits or {
-            'ai': (int(os.getenv('AI_DAILY_LIMIT','100')), int(os.getenv('AI_GLOBAL_DAILY_LIMIT','1000')), 10),
-            'amap': (int(os.getenv('MAP_DAILY_LIMIT','2000')), int(os.getenv('MAP_GLOBAL_DAILY_LIMIT','10000')), 120),
+            'ai': (int(os.getenv('AI_DAILY_LIMIT','100')), int(os.getenv('AI_GLOBAL_DAILY_LIMIT','1000')), int(os.getenv('AI_MINUTE_LIMIT','10'))),
+            'amap': (int(os.getenv('MAP_DAILY_LIMIT','2000')), int(os.getenv('MAP_GLOBAL_DAILY_LIMIT','10000')), int(os.getenv('MAP_MINUTE_LIMIT','120'))),
         }
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with closing(sqlite3.connect(self.path)) as db, db:
@@ -55,6 +55,10 @@ class Quota:
         day = datetime.fromtimestamp(now,timezone(timedelta(hours=8))).strftime('%Y-%m-%d')
         individual, total, minute = self.limits[service]
         buckets = [(owner,'day:'+day,individual), ('global','day:'+day,total), (owner,'minute:'+str(int(now//60)),minute)]
+        # Zero disables that quota; retain bounded requests and upstream concurrency.
+        buckets = [bucket for bucket in buckets if bucket[2] > 0]
+        if not buckets:
+            return
         with closing(sqlite3.connect(self.path, timeout=5)) as db, db:
             db.execute('BEGIN IMMEDIATE')
             for key, period, limit in buckets:

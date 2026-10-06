@@ -24,7 +24,7 @@
     "support": "https://example.com/support",
     "privacy_policy_url": "https://example.com/privacy"
   },
-  "release_notes": "1.0.0：整理当前桌面功能、密钥网关及可复现的宿主补丁。进入行程隐藏主体，结束返回主页；历史支持删除。源码发布，未提交应用商店。",
+  "release_notes": "1.0.1：提供内置运行环境和共享网关凭证的 Windows 演示包；源码客户端支持 URL 绑定的预置凭证，网关支持关闭调用次数额度。仍依赖自定义宿主集成，未正式提交或上架 App Hub。",
   "age_rating": "all",
   "license": "Apache-2.0"
 }

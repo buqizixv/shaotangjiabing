@@ -55,3 +55,9 @@ class GatewayTests(unittest.TestCase):
         self.gateway.amap.query=broken
         code,value=self.post('/v1/amap',{'path':'v3/place/text','params':{'keywords':'北京站'}})
         self.assertEqual(code,502);self.assertNotIn('LEAKED',json.dumps(value))
+
+    def test_zero_quota_is_unlimited_and_can_mix_with_limits(self):
+        quota=Quota(self.path,{'ai':(0,0,0),'amap':(0,2,0)})
+        for _ in range(20):quota.consume('demo','ai')
+        quota.consume('a','amap');quota.consume('b','amap')
+        with self.assertRaises(Rejected):quota.consume('c','amap')
