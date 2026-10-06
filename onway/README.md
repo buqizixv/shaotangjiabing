@@ -4,9 +4,9 @@
 
 在途 Onway 是围绕 OctoSense 开发的出行助手。用户输入目的地或保存固定通勤，应用结合路线、天气和偏好提供方案，并用随阶段变化的卡片呈现步行、候车、乘车和到达信息。
 
-当前源码与审核资料版本为 **1.0.2**；可解压运行的 Windows 演示包版本为 **1.0.1**。1.0.2 主要补齐提交资料及后台依赖说明，没有另外发布 1.0.2 Windows 可执行包。
+当前统一发布版本为 **1.0.2**，同一发布页提供 Windows 即用包、完整 Onway 源码与介绍视频。
 
-[视频介绍](#视频介绍) · [下载 Windows 演示包](https://github.com/buqizixv/shaotangjiabing/releases/tag/onway-v1.0.1) · [最新版本资料](https://github.com/buqizixv/shaotangjiabing/releases/tag/onway-v1.0.2) · [隐私说明](PRIVACY.md)
+[视频介绍](#视频介绍) · [下载 Windows 演示包](https://github.com/buqizixv/shaotangjiabing/releases/tag/onway-v1.0.2) · [最新版本资料](https://github.com/buqizixv/shaotangjiabing/releases/tag/onway-v1.0.2) · [隐私说明](PRIVACY.md)
 
 ## 视频介绍
 
@@ -27,12 +27,14 @@
 
 ## 立即体验
 
-1. 打开 [onway-v1.0.1 发布页](https://github.com/buqizixv/shaotangjiabing/releases/tag/onway-v1.0.1)，下载 `Onway-v1.0.1-Windows-x64.zip`。
+1. 打开 [onway-v1.0.2 发布页](https://github.com/buqizixv/shaotangjiabing/releases/tag/onway-v1.0.2)，下载 `Onway-v1.0.2-Windows-x64.zip`。
 2. 完整解压，双击 `Onway.exe`。演示包包含配套宿主、Python、资源和共享网关访问凭证，无需自行填写网关凭证。
 3. 允许系统定位或手动设置起点，搜索目的地并选择方案。
 4. 在“出行习惯”开启 AI 功能；自动通勤邀请还需要提醒与定位开启、有效位置和符合通勤条件。可先在首页预览推荐卡片。
 
 地图、天气、公交与 AI 需要网络和可用上游服务。
+
+运行包的 `source/onway/` 附有完整项目源码，可直接阅读 Splash 界面、Python 后台、网关与宿主补丁；发布页另有独立源码 ZIP。`Onway.exe` 是启动器，完整源码无需从可执行文件反编译。
 
 ## 当前功能
 
@@ -73,7 +75,7 @@ MiniMax 和地图密钥只放服务器；独立部署见 [gateway/README.md](gat
 
 个人配置、行程与历史保存在宿主数据目录的 onway/ 下，不提交。Windows 桌面、实际路线/天气/公交接口、AI 推荐与总结、窗口切换已验证；完整户外连续行程、手机端、休眠后持续定位和系统通知尚未验证或接入。关闭整个 OctoSense 会停止后台。
 
-## v1.0.1 即用演示包
+## v1.0.2 即用演示包
 
 Windows 演示包内置宿主、Python 和独立共享网关凭证，解压后打开 Onway.exe，不需填写凭证。源码不包含该共享凭证；修改网关地址不会把包内凭证发给其他服务器。演示网关按用户授权取消调用次数额度，保留请求大小和并发约束。演示包使用定制宿主，不等于标准 App Hub 安装即可获得全部功能。
 
@@ -81,7 +83,7 @@ Windows 演示包内置宿主、Python 和独立共享网关凭证，解压后�
 
 ## v1.0.2 审核资料
 
-补齐真实原生截图、发布者资料及 [隐私说明](PRIVACY.md)。没有配套后台的参考宿主运行 12 秒后明确显示依赖原因，避免持续展示连接中。截图分别展示当前源码配套后台首页与无后台的依赖页面，测试数据与个人运行数据隔离。完整检查输出与自检回答见 [审核目录](docs/apphub-review/)。原 v1.0.1 Windows 演示包继续可用；本次未改动后台业务或网关，也未修改个人历史。
+补齐真实原生截图、发布者资料及 [隐私说明](PRIVACY.md)。没有配套后台的参考宿主运行 12 秒后明确显示依赖原因，避免持续展示连接中。截图分别展示当前源码配套后台首页与无后台的依赖页面，测试数据与个人运行数据隔离。完整检查输出与自检回答见 [审核目录](docs/apphub-review/)。Windows 即用包已同步打包为 v1.0.2；本次未改动后台业务或网关，也未修改个人历史。
 
 [App Hub 人工审核申请 #102](https://github.com/OctoSense-org/OctoSense-App-Hub/issues/102) 已提交，尚未获准上架。1.0.2 审核包和 `onway-v1.0.2` 标签保持冻结；标签统一加上前缀后，冻结 listing 中指向旧 `v1.0.2` 标签的隐私链接失效，审核 Issue 已披露。当前有效说明为 [本目录隐私文档](PRIVACY.md)，后续适配版本需修正元数据地址。
 

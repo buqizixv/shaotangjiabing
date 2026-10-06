@@ -10,7 +10,7 @@
 
 | 应用 | 解决的问题 | 当前交付 | 入口 |
 | --- | --- | --- | --- |
-| **在途 Onway** | 什么时候出发、怎样到站、在哪里下车，以及如何结束和记录一次行程 | v1.0.2 审核源码与演示视频；v1.0.1 Windows 即用演示包 | [项目说明](onway/README.md) · [下载演示包](https://github.com/buqizixv/shaotangjiabing/releases/tag/onway-v1.0.1) |
+| **在途 Onway** | 什么时候出发、怎样到站、在哪里下车，以及如何结束和记录一次行程 | v1.0.2 Windows 即用包、源码与视频 | [项目说明](onway/README.md) · [下载演示包](https://github.com/buqizixv/shaotangjiabing/releases/tag/onway-v1.0.2) |
 | **Daycast** | 天气对穿衣、活动和日程有什么影响，如何结合个人资料做安排 | v0.4.2 OctoSense 应用包 | [项目说明](octoscript-weather-assistant/README.md) · [下载应用包](https://github.com/buqizixv/shaotangjiabing/releases/tag/v0.4.2) |
 
 ## 在途 Onway：从准备出发到到达
@@ -31,7 +31,7 @@
 
 ### 体验在途
 
-1. 在 [Onway v1.0.1 发布页](https://github.com/buqizixv/shaotangjiabing/releases/tag/onway-v1.0.1) 下载 `Onway-v1.0.1-Windows-x64.zip`。
+1. 在 [Onway v1.0.2 发布页](https://github.com/buqizixv/shaotangjiabing/releases/tag/onway-v1.0.2) 下载 `Onway-v1.0.2-Windows-x64.zip`。
 2. 完整解压，双击 `Onway.exe`。演示包包含配套宿主、Python 后台和共享网关访问凭证，无需另填凭证。
 3. 允许所需的设备定位权限，或手动设置起点；选择目的地和方案后开始体验。AI 功能在“出行习惯”中开启。
 
@@ -102,7 +102,7 @@ shaotangjiabing/
     └── PRIVACY.md                     # 数据和隐私说明
 ```
 
-应用版本以各自的 `bundle/manifest.json` 为准。在途标签统一使用 `onway-v<版本号>`，当前有 `onway-v1.0.0`、`onway-v1.0.1`、`onway-v1.0.2`；较早的 `onway-v0.5.4` 也保留。Daycast 当前发布标签为 `v0.4.2`。Git 标签标记整个仓库的提交，应用下载附件则按项目区分。
+应用版本以各自的 `bundle/manifest.json` 为准。在途标签统一使用 `onway-v<版本号>`，当前有 `onway-v1.0.0`、`onway-v1.0.2`、`onway-v1.0.2`；较早的 `onway-v0.5.4` 也保留。Daycast 当前发布标签为 `v0.4.2`。Git 标签标记整个仓库的提交，应用下载附件则按项目区分。
 
 ## 反馈与许可证
 
