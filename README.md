@@ -1,191 +1,107 @@
-# 烧汤夹饼 · OctoSense 比赛项目
+# 少糖加冰 · GOSIM 2026 Agentic App
 
-本仓库包含两位队员独立维护的 OctoSense 应用。应用使用 OctoScript（Splash）实现，HTML 文件用于界面原型。
+**让 AI 理解日常，让建议落到行动。**
 
-| 项目 | 当前版本 | 目标 | 项目入口 |
+我们是少糖加冰团队。本仓库收录两个围绕 OctoSense 开发的生活应用：**在途 Onway** 关注出行过程，**Daycast** 关注天气与今天的安排。我们希望把地点、时间、天气和个人偏好连接起来，在用户需要的时候呈现有依据、可确认的建议。
+
+两个应用独立维护，各自保存数据和发布版本。目前尚未打通跨应用数据共享，不将它们描述为已经联动运行的一套系统。
+
+## 项目导航
+
+| 应用 | 解决的问题 | 当前交付 | 入口 |
 | --- | --- | --- | --- |
-| 在途 Onway | **0.5.4** | 按通勤阶段展示当前需要的卡片，并提供 MiniMax 通勤建议 | [项目说明](onway/README.md) |
-| 天气助手 | **0.1.0** | 查询天气、切换城市、保存个人偏好，并通过宿主助手提问 | [项目说明](octoscript-weather-assistant/README.md) |
+| **在途 Onway** | 什么时候出发、怎样到站、在哪里下车，以及如何结束和记录一次行程 | v1.0.2 审核源码；v1.0.1 Windows 即用演示包 | [项目说明](onway/README.md) · [下载演示包](https://github.com/buqizixv/shaotangjiabing/releases/tag/onway-v1.0.1) |
+| **Daycast** | 天气对穿衣、活动和日程有什么影响，如何结合个人资料做安排 | v0.4.2 OctoSense 应用包 | [项目说明](octoscript-weather-assistant/README.md) · [下载应用包](https://github.com/buqizixv/shaotangjiabing/releases/tag/v0.4.2) |
 
-## 在途 Onway
+## 在途 Onway：从准备出发到到达
 
-在途围绕起点、目的地和常用通勤方案，提供欢迎与设置、准备出门、步行、候车、乘车、换乘、到达结算、异常提醒与历史记录等 17 个页面。界面采用原生卡片，内容随窗口伸缩。
+在途用随行程阶段变化的卡片，呈现当下需要的出行信息。用户输入目的地或选择常用地点，比较真实查询得到的路线，再自主选择方案。进入行程后，信息重点随步行、候车、乘车和到达而变化。
 
-0.5.4 接入 Python MiniMax 后台：用户开启“智能通勤”后，应用提交地点名称、偏好、通勤阶段和最近 30 条历史，建议直接显示在通勤卡片中。密钥保存在后台环境，不进入应用包。当前路线和班次仍为原型示例；AI 提供应用内建议，不提供已验证的实时公交、系统通知或宿主关闭后的定位。
+- **出行规划：**目的地搜索、常用地点，比较预计时长、步行距离和换乘次数。
+- **动态行程：**准备出发、步行指引、公交候车、乘车与到达总结；支持按当前阶段人工纠正。
+- **通勤建议：**保存固定通勤地点、上下班时间与通勤日期，结合路线预估、天气及个人偏好提供出发邀请。
+- **AI 推荐与记忆：**在用户开启 AI 功能后生成路线建议、行程总结和个性化记忆；推荐不替用户决定出发。
+- **记录管理：**完成行程后保留历史，可删除单条或清空；中途结束直接返回主页，不生成完成历史。
 
-- [应用源码与清单](onway/bundle/)
-- [17 个页面的中文原型导航](onway/prototypes/原型导航.html)
-- [产品需求文档](onway/docs/在途_Onway_产品需求文档_V0.1.0.md)
-- [MiniMax 后台与 API](onway/backend/README.md)
+地图、天气与 MiniMax 调用经过密钥中转网关，上游密钥保存在服务器；北京公交到站使用第三方接口。数据不可用时显示失败或缺失状态，不补造班次。
 
-独立开发环境已验证 17 页与主要交互、窗口伸缩及后台测试；真实 MiniMax 回复仍需要有效密钥后验证。完整验证范围和限制见应用 README。
+### 体验在途
 
-## 团队目录与版本
+1. 在 [Onway v1.0.1 发布页](https://github.com/buqizixv/shaotangjiabing/releases/tag/onway-v1.0.1) 下载 `Onway-v1.0.1-Windows-x64.zip`。
+2. 完整解压，双击 `Onway.exe`。演示包包含配套宿主、Python 后台和共享网关访问凭证，无需另填凭证。
+3. 允许所需的设备定位权限，或手动设置起点；选择目的地和方案后开始体验。AI 功能在“出行习惯”中开启。
 
-```text
-onway/                        # 在途：源码、原型、文档、后台与应用包
-octoscript-weather-assistant/ # 天气助手：源码、文档与应用包
-```
+**当前交付边界：**演示包使用定制宿主。本机隔离环境已验证启动、地图与 AI 服务连接；其他电脑和完整户外连续行程仍需实测。普通 OctoSense 仅安装 `onway/bundle` 尚不能运行完整功能，无配套后台时会显示依赖说明。当前没有实时道路拥堵判断，也不保证系统通知或休眠后的连续定位。
 
-两项目在各自的 `bundle/manifest.json` 记录版本，分别使用 `onway-v<版本号>`、`weather-v<版本号>` 标签。标签标记一次完整仓库提交，各项目只修改自己的目录；发布时按应用名称区分。
+[App Hub 人工审核申请 #102](https://github.com/OctoSense-org/OctoSense-App-Hub/issues/102) 已提交，正在请求确认宿主接入方式；**提交不等于上架或标准宿主适配完成**。详见 [接入说明](onway/docs/AppHub提交说明.md) 与 [检查、自检材料](onway/docs/apphub-review/)。
 
-## 天气助手
+## Daycast：让天气进入今天的安排
 
-一个运行在 OctoSense 中的天气助手应用。用户可以查看天气、切换和搜索城市、保存天气偏好，并通过 OctoSense 宿主的助手服务提问。
+Daycast 将天气、衣橱、偏好、日程和家庭关注城市放在一起，帮助用户回答“今天怎么安排”。它通过 OctoSense 助手处理自然语言，给出建议或待确认草案；新增个人资料由用户确认后保存。
 
-> **应用使用 OctoScript 编写。** 主要源码是 [`main.splash`](octoscript-weather-assistant/bundle/main.splash)。
+- **天气与城市：**查看当前天气、小时和未来预报；搜索、保存并切换关注地点。
+- **出门建议：**结合天气、怕冷怕热等偏好、已有衣物和日程，提供穿衣与活动建议。
+- **衣橱管理：**记录衣物类型和家中存放位置；在宿主支持时选取或拍摄照片，照片留在本机。
+- **日程与偏好：**用自然语言起草安排，检查时间和冲突；将天气关注点整理成可确认的条件。
+- **家庭城市：**保存家人所在城市和本机提醒偏好，方便关注异地天气。
 
-## 为什么开发这个应用
+天气与地点查询来自 Open-Meteo；AI 通过 OctoSense 宿主会话能力处理，模型提供方、凭据和授权由宿主管理。
 
-天气应用不应该只给出温度数字，还应该帮人快速决定“今天怎么安排”。这个项目希望把天气、地点和个人关注点放在一个简单的日常流程里：打开应用先看当前城市天气；需要关注别的地方时，点城市名就能切换；遇到出行问题时，可以结合当前城市和天气向 OctoSense 助手提问。
+### 体验 Daycast
 
-城市切换流程参考了用户提供的手机天气界面：
+在 [Daycast v0.4.2 发布页](https://github.com/buqizixv/shaotangjiabing/releases/tag/v0.4.2) 下载应用包，按 [项目说明](octoscript-weather-assistant/README.md#运行与检查) 使用 OctoSense / 官方开发工具加载。联网查询需要网络；助手功能需要支持相应服务的宿主，并由用户完成 AI 设置和授权。照片选择等能力也取决于宿主是否支持包内声明的权限。
 
-1. 在首页点击当前城市。
-2. 在城市管理页查看已保存的城市并直接切换。
-3. 若要添加城市，打开搜索页，先选国内或国际热门城市，也可以输入名称搜索。
-4. 选中地点后，应用将它保存到城市列表并更新首页天气。
+**当前交付边界：**GitHub 发布的应用包不代表已获 App Hub 准入。家庭城市和提醒偏好目前保存在本机，尚不会主动发送系统通知、Matrix 消息或家庭消息；空气质量尚未接入。
 
-个性化方向是让用户自己选择怕冷、怕热、关注降雨等项目，也能用“+”添加自己的标签。家庭城市和提醒设置先保存在本机，避免在没有相应宿主服务时声称可以通知家人。
+## 界面预览
 
-## 页面与功能
-
-| 页面 | 当前内容 |
-| --- | --- |
-| 今天 | 当前城市、温度、体感、天气状况、今日高低温和基础出行提示；城市入口打开城市管理。 |
-| 城市管理 | 展示已保存地点，选择某个城市即可切换。 |
-| 城市搜索 | 提供国内外热门城市；支持搜索本地常用地点索引，并通过地理编码服务查找其他名称。 |
-| 天空 | 当前城市逐小时预报和未来 7 天预报。 |
-| 问答 | 把城市、已有天气摘要和用户问题交给 OctoSense 助手。 |
-| 我的 | 保存体感偏好、自定义标签、家庭关注城市和本机提醒开关。 |
-
-### 城市切换
-
-首页城市入口直接转到城市管理；选中城市时更新当前地点、保存列表并刷新天气：
-
-```splash
-ButtonFlatter{
-    text: current_city.name + " · " + current_city.country + "   ›   切换城市"
-    on_click: || goto("cities")
-}
-
-fn choose_city(city){
-    current_city = city
-    let already_saved = false
-    for i in cities.len() {
-        if cities[i].name == city.name && cities[i].country == city.country {
-            already_saved = true
-        }
-    }
-    if !already_saved { cities.push(city) }
-    page = "today"
-    save_data()
-    refresh_weather()
-}
-```
-
-### 天气搜索
-
-应用先匹配内置常用地点，所以输入“晋”时可以列出晋源区、晋城、晋中等结果；本地索引没有匹配项时，再请求 Open-Meteo 地理编码服务。
-
-```splash
-for place in local_places {
-    if place.name.search(search_text) >= 0 || place.admin1.search(search_text) >= 0 {
-        local_results.push(place)
-    }
-}
-if local_results.len() > 0 {
-    city_results = local_results
-    ui.content.render()
-    return
-}
-```
-
-### OctoSense 助手接法
-
-天气问答采用 OctoSense 提供的应用会话接口。应用只提交当前地点、已有天气摘要和用户问题，不保存模型服务商凭据：
-
-```splash
-host.request("octos.session.open", {}, fn(open_result){
-    if !open_result.is_ok {
-        chat_messages.push({speaker: "天气助手", text: "助手暂不可用，请检查 OctoSense 授权和 AI 设置。"})
-        return
-    }
-    host.request("octos.turn.start", {text: prompt}, fn(answer){
-        if answer.is_ok {
-            chat_messages.push({speaker: "天气助手", text: answer.data.text})
-        }
-    })
-})
-```
-
-首次使用需要宿主授权，也需要 OctoSense 中已配置可用的 AI。当前本地 `card-host` 预览不提供 `octos` 助手服务，因此已验证服务不可用时的提示，但尚未在真实 OctoSense 宿主中验证 AI 回复。
-
-## 界面截图
-
-以下图片是应用在 card-host 中的实际界面截图，不是设计稿。
+截图展示各自应用的运行页面。Onway 首页由参考宿主加配套后台运行；Daycast 首页展示演示地点、天气和生活资料。两者不作为同一次真实生活过程或完整户外实测的证据。
 
 <table>
   <tr>
-    <td align="center"><strong>已保存城市与切换入口</strong><br><img src="octoscript-weather-assistant/bundle/screenshots/02-cities.png" width="320" alt="城市管理页面"></td>
-    <td align="center"><strong>热门城市搜索</strong><br><img src="octoscript-weather-assistant/bundle/screenshots/03-search.png" width="320" alt="热门城市搜索页面"></td>
-  </tr>
-  <tr>
-    <td align="center"><strong>输入“晋”后的地点候选</strong><br><img src="octoscript-weather-assistant/bundle/screenshots/04-search-jin.png" width="320" alt="晋字搜索结果"></td>
-    <td align="center"><strong>偏好与自定义标签</strong><br><img src="octoscript-weather-assistant/bundle/screenshots/06-mine.png" width="320" alt="我的页面和自定义标签"></td>
+    <td align="center"><strong>在途 Onway · 出行首页</strong><br><img src="onway/bundle/screenshots/01-home.png" width="360" alt="Onway 出行首页，含目的地搜索、常用地点和推荐卡片预览"></td>
+    <td align="center"><strong>Daycast · 今日建议</strong><br><img src="octoscript-weather-assistant/docs/product-guide/assets/首页-今日出门建议.png" width="360" alt="Daycast 首页，结合天气与个人资料展示今日建议"></td>
   </tr>
 </table>
 
-## 技术结构
+## 技术与数据
+
+两款应用的界面入口都是 OctoScript 应用包中的 Splash 脚本。Daycast 通过标准脚本网络与宿主助手接口实现功能；Onway 的完整桌面体验还依赖 Python 后台和 Rust 宿主扩展，相关源码及补丁一并公开。
+
+| 内容 | 在途 Onway | Daycast |
+| --- | --- | --- |
+| 界面入口 | [`onway/bundle/main.splash`](onway/bundle/main.splash) | [`octoscript-weather-assistant/bundle/main.splash`](octoscript-weather-assistant/bundle/main.splash) |
+| 外部数据 | 地图、天气、第三方公交到站 | Open-Meteo 天气与地理编码 |
+| AI 路径 | MiniMax，经在途网关调用 | OctoSense 宿主助手会话 |
+| 本机资料 | 常用地点、通勤、行程历史、AI 记忆 | 城市、偏好、衣橱、日程、家庭城市 |
+| 隐私说明 | [Onway 隐私说明](onway/PRIVACY.md) | [Daycast 隐私说明](octoscript-weather-assistant/PRIVACY.md) |
+
+个人运行目录、上游密钥和私钥不提交到源码仓库。Onway 即用演示包另含共享网关访问凭证；AI 分析会向云端服务发送任务所需上下文。Daycast 衣物照片留在应用本机存储，助手接收相关文本上下文。具体数据处理和删除边界以各应用隐私说明为准。
+
+Onway 首次运行导入 10 条项目作者指定的历史记录：路线来自接口查询，日期与完成用时为编写导入，不代表定位核验的真实完整行程。用户可在历史页删除或清空。
+
+## 仓库结构与版本
 
 ```text
-octoscript-weather-assistant/
-├── BRIEF.md                       # 产品目标与范围
-├── PRIVACY.md                     # 数据和隐私说明
-├── README.md                      # 应用目录说明
-└── bundle/                        # OctoSense 应用包
-    ├── manifest.json              # 应用 ID、权限、网络域名和存储额度
-    ├── listing.json               # 名称、说明、商店截图和发布信息
-    ├── main.splash                # OctoScript 应用逻辑与界面
-    ├── assets/icon.svg            # 应用图标
-    └── screenshots/               # card-host 实际截图
+shaotangjiabing/
+├── README.md                         # 少糖加冰团队与项目导航
+├── LICENSE                           # Apache-2.0
+├── onway/                            # 在途
+│   ├── bundle/                       # 脚本界面、清单、资源与截图
+│   ├── backend/                      # Python 配套后台
+│   ├── gateway/                      # 密钥中转网关
+│   ├── runtime/                      # 定制宿主集成补丁
+│   └── docs/                         # 产品、宣传片与审核说明
+└── octoscript-weather-assistant/      # Daycast
+    ├── bundle/                       # 脚本应用与资源
+    ├── docs/                         # 使用说明与流程截图
+    └── PRIVACY.md                     # 数据和隐私说明
 ```
 
-| 部分 | 实现 |
-| --- | --- |
-| 应用语言 | OctoScript（Splash），由 OctoSense 宿主解释运行。 |
-| 天气服务 | Open-Meteo Forecast API。 |
-| 城市搜索 | 内置常用地点索引；其他输入走 Open-Meteo Geocoding API。 |
-| 本地数据 | OctoSense 应用私有存储，保存城市、偏好、家庭城市和提醒开关。 |
-| AI 问答 | `octos.session.open` 与 `octos.turn.start`，由宿主处理授权和 AI 配置。 |
-| 运行权限 | `storage`、`net`、`octos.session.open`、`octos.turn.start`；网络只声明天气和地理编码服务域名。 |
+应用版本以各自的 `bundle/manifest.json` 为准。在途标签统一使用 `onway-v<版本号>`，当前有 `onway-v1.0.0`、`onway-v1.0.1`、`onway-v1.0.2`；较早的 `onway-v0.5.4` 也保留。Daycast 当前发布标签为 `v0.4.2`。Git 标签标记整个仓库的提交，应用下载附件则按项目区分。
 
-## 开发与验证
+## 反馈与许可证
 
-应用包通过 OctoSense App Hub 的本地 `hub check` 检查，使用了 unsigned 开发模式。城市列表、搜索输入与结果、自定义标签和本地保存流程已在 Windows card-host 中交互验证，并检查过应用重启后的保存数据。
+请通过 [Issues](https://github.com/buqizixv/shaotangjiabing/issues) 提交问题，并注明 **Onway** 或 **Daycast**、版本、宿主版本和复现步骤。不要在反馈中粘贴 API 密钥、访问凭证或私钥。
 
-在当前受限运行环境里，天气服务网络请求未能完成；请在有网络的 OctoSense 宿主中刷新并确认天气数据。AI 回复也需要在支持 `octos` 的真实宿主中授权后验证。
-
-本仓库保存应用源代码和 bundle，不包含 Rust 天气应用。开发时需要另外准备官方 OctoScript-App-Design-Flow 与 OctoSense App Hub 工具链；具体安装和宿主要求见 [官方开发流程](https://github.com/OctoSense-org/OctoScript-App-Design-Flow) 与 [App Hub 文档](https://github.com/OctoSense-org/OctoSense-App-Hub)。准备好工具链后可运行：
-
-```powershell
-python <OctoScript-App-Design-Flow 路径>\tools\octo check octoscript-weather-assistant\bundle
-python <OctoScript-App-Design-Flow 路径>\tools\octo run octoscript-weather-assistant\bundle --port 8141
-python <OctoScript-App-Design-Flow 路径>\tools\octo shot 8141 preview.png
-```
-
-## 当前边界
-
-- 天气偏好和自定义标签可保存、查看与移除；首页天气建议目前是基础版，尚未把每种用户偏好都接入独立的建议规则。
-- 家庭城市与“提醒开关”只记录在应用本机；当前版本不会发送 Matrix 消息，也不会创建系统通知。
-- 城市搜索优先使用应用内置的常用地点索引；索引之外的地点依赖地理编码服务和网络。
-- 问答需要 OctoSense 宿主提供助手服务，并由用户在宿主授权和配置 AI。
-- 尚未完成 App Hub 正式签名和提交。
-
-## 数据和隐私
-
-应用把当前城市、保存城市、天气偏好、家庭关注城市和提醒开关写入 OctoSense 为应用分配的私有目录。查询非内置地点时会将搜索词发送给 Open-Meteo 地理编码服务。使用问答时，城市、已有天气摘要和问题通过宿主助手服务处理。详细说明见 [`PRIVACY.md`](octoscript-weather-assistant/PRIVACY.md)。
-
-## 许可证
-
-仓库使用 Apache-2.0 许可证，详见 [`LICENSE`](LICENSE)。
+项目使用 [Apache-2.0](LICENSE) 许可证。OctoSense 及相关工具链、字体与依赖的许可证以各自声明为准。
