@@ -5,12 +5,12 @@
   "category": "weather",
   "keywords": ["天气", "城市", "预报", "衣橱", "日程", "出行", "Daycast"],
   "screenshots": [
-    "screenshots/02-cities.png",
-    "screenshots/03-search.png",
-    "screenshots/04-search-jin.png",
-    "screenshots/06-mine.png"
+    "screenshots/城市管理-已保存地点.png",
+    "screenshots/城市搜索-热门地点入口.png",
+    "screenshots/城市搜索-晋字地点结果.png",
+    "screenshots/我的-天气偏好与家庭提醒设置.png"
   ],
-  "icon": "assets/icon.svg",
+  "icon": "assets/Daycast天气晴云轨迹图标.svg",
   "platforms": ["windows"],
   "publisher": {
     "name": "buqizixv",
