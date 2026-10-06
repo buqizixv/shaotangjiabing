@@ -56,7 +56,6 @@ let new_clothing_location = ""
 let clothing_photo = ""
 let clothing_photo_view_path = ""
 let clothing_photo_status = ""
-let clothing_photo_busy = false
 let clothing_camera_status = ""
 let clothing_form_status = ""
 let advice_text = "天气加载后，Daycast 会结合你的衣橱和日程给出建议。"
@@ -313,27 +312,6 @@ fn open_saved_clothing_photo(index){
         if bytes != nil { ui.saved_clothing_photo.load_image_from_data_async(bytes) }
     })
 }
-fn pick_clothing_photo(){
-    if clothing_photo_busy { return }
-    clothing_photo_busy = true
-    clothing_photo_status = "正在打开照片选择器…"
-    ui.clothing_photo_status.set_text(clothing_photo_status)
-    host.request("photo.pick", {}, fn(result){
-        if result.is_ok && result.data != nil && result.data.bytes != nil {
-            fs.mkdir("wardrobe_photos")
-            fs.write("wardrobe_photos/draft.json", result.data.bytes.to_json())
-            clothing_photo = "wardrobe_photos/draft.json"
-            clothing_photo_busy = false
-            clothing_photo_status = "已选好照片（保存衣物时一起保存）"
-            ui.content.render()
-            start_timeout(0.05, || show_clothing_photo())
-        } else {
-            clothing_photo_busy = false
-            clothing_photo_status = if result.is_ok {"没有收到照片"} else {result.error}
-            ui.clothing_photo_status.set_text(clothing_photo_status)
-        }
-    })
-}
 fn open_clothing_camera(){
     clothing_camera_status = ""
     page = "wardrobe-camera"
@@ -351,20 +329,12 @@ fn captured_clothing_photo(){
     start_timeout(0.05, || show_clothing_photo())
 }
 fn close_clothing_camera(){ ui.clothing_camera.stop(); page = "wardrobe"; ui.content.render() }
-fn save_clothing_photo_copy(){
-    if clothing_photo != "wardrobe_photos/draft.json" { return }
-    let copy_path = "wardrobe_photos/" + ("" + floor(time_now() * 1000)) + ".json"
-    fs.write(copy_path, fs.read(clothing_photo))
-    clothing_photo = copy_path
-    fs.remove("wardrobe_photos/draft.json")
-}
 fn add_clothing(){
     let item = ui.clothing_input.text().trim()
     if item == "" { return }
     new_clothing_location = ui.clothing_location.text().trim()
     let exists = false
     for i in wardrobe.len() { if wardrobe[i] == item { exists = true; if new_clothing_location != "" && i < wardrobe_locations.len() { wardrobe_locations[i] = new_clothing_location } } }
-    save_clothing_photo_copy()
     if !exists { wardrobe.push(item); wardrobe_locations.push(new_clothing_location); wardrobe_photos.push(clothing_photo) }
     else { for i in wardrobe.len() { if wardrobe[i] == item && clothing_photo != "" && i < wardrobe_photos.len() {
         if wardrobe_photos[i] != "" && wardrobe_photos[i] != clothing_photo && fs.exists(wardrobe_photos[i]) { fs.remove(wardrobe_photos[i]) }
@@ -879,7 +849,6 @@ SolidView{width: Fill height: Fill flow: Down padding: 16 spacing: 10 draw_bg.co
                 draw_bg +: {color: #xffffff color_hover: #xffffff color_focus: #xffffff color_empty: #xffffff border_radius: 10.0}
                 draw_text +: {color: ink color_empty: muted color_empty_hover: muted}}
             View{width: Fill height: Fit flow: Right spacing: 8
-                ButtonFlat{text: "从相册/文件选择照片" height: 40 on_click: || pick_clothing_photo() draw_bg +: {border_radius: 18.0 color: #xeaf1f8 color_hover: #xdce8f4 color_down: #xcbddec border_size: 0.0} draw_text.color: ink}
                 ButtonFlat{text: "拍摄照片" height: 40 on_click: || open_clothing_camera() draw_bg +: {border_radius: 18.0 color: #xffeedc color_hover: #xffdfb5 color_down: #xffd28d border_size: 0.0} draw_text.color: ink}
             }
             clothing_photo_status := Label{width: Fill text: clothing_photo_status draw_text.color: muted draw_text.text_style.font_size: 13}

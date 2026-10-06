@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "subtitle": "天气、衣橱、日程与出行建议",
-  "description": "查看天气，管理衣橱和日程，并获得结合衣物与安排的出行建议。衣橱可记录衣物类型、家中存放位置，并选取或拍摄衣物照片；照片和衣橱数据保存在本机。问答可让 AI 帮你添加衣物、创建天气偏好、添加家庭城市或创建日程，确认后才会保存。",
+  "description": "查看天气，管理衣橱和日程，并获得结合衣物与安排的出行建议。衣橱可记录衣物类型、家中存放位置，并使用相机拍摄衣物照片；照片和衣橱数据保存在本机。问答可让 AI 帮你添加衣物、创建天气偏好、添加家庭城市或创建日程，确认后才会保存。",
   "category": "weather",
   "keywords": ["天气", "城市", "预报", "衣橱", "日程", "出行", "Daycast"],
   "screenshots": [
@@ -17,7 +17,7 @@
     "support": "https://github.com/buqizixv/shaotangjiabing/issues",
     "privacy_policy_url": "https://github.com/buqizixv/shaotangjiabing/blob/main/octoscript-weather-assistant/PRIVACY.md"
   },
-  "release_notes": "0.4.2：修复衣橱存放位置行未显示的问题；保存后会回显位置，位置在衣物卡片中单独显示。",
+  "release_notes": "0.4.3：衣橱照片改由应用内相机拍摄；照片保存在本机，原有照片仍可查看。",
   "age_rating": "all",
   "license": "Apache-2.0"
 }
