@@ -63,8 +63,172 @@ let advice_text = "天气加载后，Daycast 会结合你的衣橱和日程给�
 let advice_generation = 0
 let qa_generation = 0
 
+// Rinx credentials stay in the native client; only room IDs are stored here.
+let rinx_room = ""
+let rinx_room_name = ""
+let rinx_on = false
+let rinx_rooms = []
+let rinx_status = "先在 Rinx 登录，再选择家人聊天室。"
+let rinx_sending = false
+let family_weather = []
+let family_alerts = []
+let family_check_busy = false
+let family_check_cities = []
+let family_status = "首次检查建立天气基线；之后检测降雨、温差和大风变化。"
+
+fn family_key(city){ return ("" + city.latitude) + "," + ("" + city.longitude) }
+fn family_wet(code){ return code >= 51 && code <= 99 }
+fn family_sample(city, current){
+    return {key: family_key(city), time: current.time, temp: current.temperature_2m,
+        wet: family_wet(current.weather_code), wind: current.wind_speed_10m}
+}
+fn family_change(previous, sample){
+    let reason = ""
+    if !previous.wet && sample.wet { reason = reason + "开始降水，请带伞并注意路滑。" }
+    if sample.temp <= previous.temp - 5 { reason = reason + "较上次降温 " + round(previous.temp - sample.temp) + "°C，记得添衣。" }
+    if sample.temp >= previous.temp + 5 { reason = reason + "较上次升温 " + round(sample.temp - previous.temp) + "°C，注意补水。" }
+    if previous.temp < 35 && sample.temp >= 35 { reason = reason + "气温达到 35°C，请注意防暑。" }
+    if previous.temp > 0 && sample.temp <= 0 { reason = reason + "气温降到冰点，请注意保暖。" }
+    if previous.wind < 40 && sample.wind >= 40 { reason = reason + "风速达到 40 km/h，请留意出行安全。" }
+    return reason
+}
+fn observe_family(city, data){
+    if data == nil || data.to_json().search("\"current\"") < 0 || data.current == nil { return }
+    let current = data.current
+    let fields = current.to_json()
+    if fields.search("\"time\"") < 0 || fields.search("\"temperature_2m\"") < 0 || fields.search("\"weather_code\"") < 0 || fields.search("\"wind_speed_10m\"") < 0 { return }
+    if current.time == nil || current.temperature_2m == nil || current.weather_code == nil || current.wind_speed_10m == nil { return }
+    let sample = family_sample(city, current)
+    let previous = nil
+    let remaining = []
+    for row in family_weather {
+        if row.key == sample.key { previous = row } else { remaining.push(row) }
+    }
+    // Ignore duplicate and out-of-order responses. The server supplies local ISO time.
+    if previous != nil && datetime_number(sample.time) <= datetime_number(previous.time) { return }
+    remaining.push(sample)
+    family_weather = remaining
+    if previous != nil && reminders_on {
+        let reason = family_change(previous, sample)
+        if reason != "" {
+            let alert = {id: sample.key + "/" + sample.time, city: location_text(city),
+                text: "Daycast 家庭天气提醒 · " + location_text(city) + "\n" + sample.time + "（城市当地时间）\n" + reason + "\n当前气温 " + round(sample.temp) + "°C，" + weather_text(current.weather_code) + "。数据：Open-Meteo。",
+                state: "ready", error: ""}
+            let recent = []
+            // Retain the most recent twenty alerts.
+            for i in family_alerts.len() { if i >= family_alerts.len() - 19 { recent.push(family_alerts[i]) } }
+            recent.push(alert)
+            family_alerts = recent
+            save_data()
+            if rinx_on { send_family_alert(alert.id) }
+        }
+    }
+    save_data()
+}
+fn family_alert_state(id, state, error){
+    let rows = []
+    for row in family_alerts {
+        if row.id == id { rows.push({id: row.id, city: row.city, text: row.text, state: state, error: error}) }
+        else { rows.push(row) }
+    }
+    family_alerts = rows
+    save_data()
+    ui.content.render()
+}
+fn send_family_alert(id){
+    if rinx_sending { return }
+    if rinx_room == "" { rinx_status = "请先选择 Rinx 家人聊天室。"; ui.content.render(); return }
+    let alert = nil
+    for row in family_alerts { if row.id == id && row.state != "sent" { alert = row } }
+    if alert == nil { return }
+    rinx_sending = true
+    let room = rinx_room
+    family_alert_state(id, "sending", "")
+    rinx_status = "等待 Rinx 确认；请在 Rinx 查看聊天室和正文。"
+    host.request("storage.daycast.rinx.send", {room: room, text: alert.text}, fn(r){
+        rinx_sending = false
+        if r.is_ok {
+            family_alert_state(id, "sent", "")
+            rinx_status = "Rinx 已确认消息发送成功。"
+            if rinx_on { send_next_family_alert() }
+        } else {
+            let error = if r.error == nil {"Rinx 未确认发送成功"} else {r.error}
+            family_alert_state(id, "error", error)
+            rinx_status = "发送未获确认：" + error + "。重试前请在 Rinx 检查消息。"
+        }
+        ui.content.render()
+    })
+    ui.content.render()
+}
+fn send_next_family_alert(){
+    if !reminders_on || !rinx_on || rinx_sending { return }
+    for row in family_alerts { if row.state == "ready" { send_family_alert(row.id); return } }
+}
+fn load_rinx_rooms(){
+    rinx_status = "正在读取 Rinx 聊天室…"
+    host.request("storage.daycast.rinx.rooms", {}, fn(r){
+        if r.is_ok && r.data != nil && r.data.rooms != nil {
+            rinx_rooms = r.data.rooms
+            rinx_status = if rinx_rooms.len() == 0 {"还没有已加入的聊天室；先在 Rinx 邀请家人。"} else {"选择一个家人聊天室；提醒发送前仍需在 Rinx 确认。"}
+        } else { rinx_status = "无法读取聊天室：" + r.error + "。请打开 Rinx 并登录；此功能需要支持 Daycast 桥接的 OctoSense。" }
+        ui.content.render()
+    })
+    ui.content.render()
+}
+fn choose_rinx_room(room){
+    if rinx_sending { return }
+    rinx_room = room.id
+    rinx_room_name = room.name
+    rinx_on = false
+    save_data()
+    ui.content.render()
+}
+fn toggle_rinx(){
+    if rinx_room == "" { rinx_status = "请先读取并选择家人聊天室。" }
+    else {
+        rinx_on = !rinx_on
+        // Enabling starts future alerts; older drafts stay manual.
+        if rinx_on {
+            let rows = []
+            for row in family_alerts {
+                if row.state == "ready" { rows.push({id: row.id, city: row.city, text: row.text, state: "manual", error: ""}) }
+                else { rows.push(row) }
+            }
+            family_alerts = rows
+        }
+        save_data()
+    }
+    ui.content.render()
+}
+fn check_family_city(index){
+    if index >= family_check_cities.len() { family_check_busy = false; ui.content.render(); return }
+    let city = family_check_cities[index]
+    let url = "https://api.open-meteo.com/v1/forecast?latitude=" + ("" + city.latitude) + "&longitude=" + ("" + city.longitude) + "&current=temperature_2m,weather_code,wind_speed_10m&timezone=auto"
+    net.http_request(net.HttpRequest{url: url method: net.HttpMethod.GET}) do net.HttpEvents{
+        on_response: |response| {
+            let data = response.body.to_string().parse_json()
+            if response.status_code == 200 && data != nil && data.current != nil {
+                observe_family(city, data)
+                family_status = "已检查 " + location_text(city) + " · " + data.current.time
+            } else { family_status = "家庭城市天气暂时不可用；保留上次记录，请稍后重试。" }
+            check_family_city(index + 1)
+        }
+        on_error: |_error| { family_status = "家庭天气检查失败，请检查网络。"; check_family_city(index + 1) }
+    }
+}
+fn refresh_family_weather(){
+    if family_check_busy || family_cities.len() == 0 { return }
+    family_check_busy = true
+    family_check_cities = family_cities
+    check_family_city(0)
+}
+fn poll_family_weather(){
+    if reminders_on { refresh_family_weather() }
+    start_timeout(900.0, || poll_family_weather())
+}
+
 fn save_data(){
-    fs.write("weather.json", {current_city: current_city, cities: cities, preferences: preferences, family_cities: family_cities, wardrobe: wardrobe, wardrobe_locations: wardrobe_locations, wardrobe_photos: wardrobe_photos, schedule: schedule, reminders_on: reminders_on, current_weather: current_weather}.to_json())
+    fs.write("weather.json", {current_city: current_city, cities: cities, preferences: preferences, family_cities: family_cities, rinx_room: rinx_room, rinx_room_name: rinx_room_name, rinx_on: rinx_on, family_weather: family_weather, family_alerts: family_alerts, wardrobe: wardrobe, wardrobe_locations: wardrobe_locations, wardrobe_photos: wardrobe_photos, schedule: schedule, reminders_on: reminders_on, current_weather: current_weather}.to_json())
 }
 fn load_data(){
     if fs.exists("weather.json") {
@@ -81,6 +245,17 @@ fn load_data(){
             else { wardrobe_photos = []; for i in wardrobe.len() { wardrobe_photos.push("") } }
             if stored.schedule != nil { schedule = stored.schedule }
             if stored.reminders_on != nil { reminders_on = stored.reminders_on }
+            if stored.to_json().search("\"rinx_room\"") >= 0 && stored.rinx_room != nil { rinx_room = stored.rinx_room }
+            if stored.to_json().search("\"rinx_room_name\"") >= 0 && stored.rinx_room_name != nil { rinx_room_name = stored.rinx_room_name }
+            if stored.to_json().search("\"rinx_on\"") >= 0 && stored.rinx_on != nil { rinx_on = stored.rinx_on }
+            if stored.to_json().search("\"family_weather\"") >= 0 && stored.family_weather != nil { family_weather = stored.family_weather }
+            if stored.to_json().search("\"family_alerts\"") >= 0 && stored.family_alerts != nil {
+                for row in stored.family_alerts {
+                    if row.state == "sending" { family_alerts.push({id: row.id, city: row.city, text: row.text, state: "error", error: "上次发送结果未知，请先在 Rinx 检查消息再决定重试。"}) }
+                    else if row.state == "ready" { family_alerts.push({id: row.id, city: row.city, text: row.text, state: "manual", error: ""}) }
+                    else { family_alerts.push(row) }
+                }
+            }
             if stored.to_json().search("\"current_weather\"") >= 0 && stored.current_weather != nil { current_weather = stored.current_weather }
         }
     }
@@ -638,7 +813,7 @@ fn send_weather_question(){
     ui.content.render()
 }
 
-start_timeout(0.05, || load_data())
+start_timeout(0.05, || { load_data(); poll_family_weather() })
 
 let ink = #x17263c
 let muted = #x708096
@@ -856,7 +1031,24 @@ SolidView{width: Fill height: Fill flow: Down padding: 16 spacing: 10 draw_bg.co
                 Label{text: "关注城市与提醒偏好保存在本机" draw_text.color: muted}
                 for i in family_cities.len() { Label{text: location_text(family_cities[i]) draw_text.color: ink} }
                 ButtonFlat{text: "+ 添加当前城市为家人关注城市" height: 38 on_click: || add_family_city() draw_bg +: {border_radius: 18.0 color: #xeaf1f8 color_hover: #xdce8f4 color_down: #xcbddec border_size: 0.0} draw_text.color: ink}
-                ButtonFlat{text: if reminders_on {"✓ 天气变化提醒已开启（本机设置）"} else {"开启本机天气提醒"} height: 38 on_click: || toggle_reminders() draw_bg +: {border_radius: 18.0 color: #xffeedc color_hover: #xffdfb5 color_down: #xffd28d border_size: 0.0} draw_text.color: ink}
+                ButtonFlat{text: if reminders_on {"✓ 家庭天气变化检查已开启"} else {"开启家庭天气变化检查"} height: 38 on_click: || toggle_reminders() draw_bg +: {border_radius: 18.0 color: #xffeedc color_hover: #xffdfb5 color_down: #xffd28d border_size: 0.0} draw_text.color: ink}
+            RoundedView{width: Fill height: Fit padding: 16 flow: Down spacing: 8 show_bg: true draw_bg.color: #xffffff draw_bg.border_radius: 18.0
+                Label{text: "Rinx 家庭天气提醒" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 20}}
+                Label{width: Fill height: Fit text: "先在 Rinx 通过浏览器登录 matrix.rinx.chat，邀请家人的完整账号（如 @dad:matrix.rinx.chat）加入聊天室。" draw_text.color: muted}
+                ButtonFlat{text: "读取 Rinx 聊天室" height: 38 on_click: || load_rinx_rooms() draw_text.color: ink}
+                Label{width: Fill height: Fit text: if rinx_room == "" {"尚未选择家人聊天室"} else {"家人聊天室：" + rinx_room_name + " · " + rinx_room} draw_text.color: ink}
+                for room in rinx_rooms { ButtonFlatter{width: Fill height: Fit text: room.name + " · " + room.id on_click: || choose_rinx_room(room) draw_text.color: #xc16e24} }
+                ButtonFlat{text: if rinx_on {"✓ 变化后交给 Rinx 确认发送"} else {"启用变化后 Rinx 提醒"} height: 38 on_click: || toggle_rinx() draw_text.color: ink}
+                Label{width: Fill height: Fit text: "Daycast 打开期间每 15 分钟检查家庭城市；首次建立基线，之后检测降水、温差 ≥5°C、冰点/高温和大风变化。关闭应用后暂停。" draw_text.color: muted}
+                ButtonFlat{text: if family_check_busy {"正在检查家庭天气…"} else {"立即检查家庭天气"} height: 38 on_click: || refresh_family_weather() draw_text.color: ink}
+                Label{width: Fill height: Fit text: family_status draw_text.color: muted}
+                Label{width: Fill height: Fit text: rinx_status draw_text.color: #xa35d20}
+                for alert in family_alerts {
+                    Label{width: Fill height: Fit text: alert.text draw_text.color: ink}
+                    Label{width: Fill height: Fit text: if alert.state == "sent" {"✓ 已通过 Rinx 发送"} else if alert.state == "sending" {"等待 Rinx 确认"} else if alert.state == "error" {"未发送：" + alert.error} else {"待发送"} draw_text.color: muted}
+                    if alert.state != "sent" && alert.state != "sending" { ButtonFlatter{text: "通过 Rinx 发送 / 重试" height: 34 on_click: || send_family_alert(alert.id) draw_text.color: #xc16e24} }
+                }
+            }
             }
         }
         if page == "tag-add" {

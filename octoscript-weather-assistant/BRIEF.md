@@ -16,7 +16,7 @@
 - `storage`：持久化当前城市、已保存城市、偏好、自定义标签、衣橱、日程和家庭提醒偏好，仅写入应用私有目录。
 - `net`：调用 Open-Meteo 天气与地理编码 API；hosts 仅 `api.open-meteo.com` 和 `geocoding-api.open-meteo.com`。
 - `octos.session.open`、`octos.turn.start`：通过 OctoSense 助手生成首页出门建议和回答天气/日程问题。发送给助手的上下文包含天气、偏好、衣橱和日程；设备端授权与 AI provider 设置由宿主处理，bundle 不包含凭据。
-- 不伪称发送 Matrix 消息； contained app 目前没有 Matrix host service。家庭提醒可在应用内配置并在天气页展示。
+- Rinx：通过升级后的 OctoSense 宿主桥接读取已加入聊天室、请求确认并发送天气变化提醒；独立 card-host 显示不可用。应用不收集 Matrix 凭据。应用打开期间每 15 分钟检查家庭城市，首次建立基线，之后检测降水、温差 ≥5°C、冰点/高温及大风变化。发送结果由 Rinx 返回，失败可重试；关闭应用后停止检查。
 
 ## 状态与验收
 - 首次启动有可用默认城市或清楚的加载提示。
