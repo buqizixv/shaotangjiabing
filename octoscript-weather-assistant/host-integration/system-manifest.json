@@ -1,0 +1,36 @@
+{
+  "agent": {
+    "instructions": "AGENT.md",
+    "model": {
+      "needs": [
+        "tool_calling"
+      ]
+    },
+    "profile": "read-only",
+    "tools": [
+      "ask_user_question"
+    ]
+  },
+  "capabilities": [
+    "storage",
+    "net",
+    "model",
+    "camera"
+  ],
+  "id": "os.weather-assistant",
+  "integrity": {
+    "bundle_blake3": "77a1f46c57629bf6d975c61cc2bc60587f7bb7f0151cb043939f11efea2c4452"
+  },
+  "name": "Daycast",
+  "network": {
+    "hosts": [
+      "api.open-meteo.com",
+      "geocoding-api.open-meteo.com"
+    ]
+  },
+  "schema": 1,
+  "storage": {
+    "max_bytes": 16777216
+  },
+  "version": "0.3.3"
+}

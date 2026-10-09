@@ -1,0 +1,451 @@
+--- a/crates/shell/src/host_tools/mod.rs
++++ b/crates/shell/src/host_tools/mod.rs
+@@ -41,6 +41,8 @@
+ pub mod toolbox;
+ #[cfg(any(feature = "app-hub", native_mobile))]
+ pub mod script_apps;
++#[cfg(any(feature = "app-hub", native_mobile))]
++pub mod daycast_rinx;
+ 
+ #[cfg(test)]
+ mod tests;
+@@ -244,12 +246,19 @@
+ 
+ /// The shell drains these after [`pump`] and hands them to its AI bus.
+ pub fn take_bus_requests() -> Vec<BusRequest> {
++    #[cfg(any(feature = "app-hub", native_mobile))]
++    daycast_rinx::expire();
+     std::mem::take(&mut *BUS.lock().unwrap_or_else(|e| e.into_inner()))
+ }
+ 
+ /// The bus answered (or failed) one of the relay's calls (`call_id` is the
+ /// bus id, [`BUS_PREFIX`] + the kernel's).
+ pub fn bus_result(call_id: &str, outcome: ToolOutcome) {
++    #[cfg(any(feature = "app-hub", native_mobile))]
++    if call_id.starts_with(daycast_rinx::PREFIX) {
++        daycast_rinx::result(call_id, outcome);
++        return;
++    }
+     if let Some(kernel_id) = call_id.strip_prefix(BUS_PREFIX) {
+         submit(Event::BusResult { call_id: kernel_id.to_string(), outcome });
+     }
+--- a/crates/shell/src/apps.rs
++++ b/crates/shell/src/apps.rs
+@@ -205,6 +205,7 @@
+         octosense_calendar_service::register();
+         octosense_calendar_service::on_publish_card(Some(std::sync::Arc::new(|app: &str, args: serde_json::Value| crate::glance::publish_for(app, &args))));
+         octosense_daycast_service::register();
++        octosense_daycast_service::register_rinx_bridge(crate::host_tools::daycast_rinx::call);
+         register_news();
+         // After every service of the shell's own: the notice service never
+         // stands in for one.
+--- a/apps/weather-assistant/host-service/src/lib.rs
++++ b/apps/weather-assistant/host-service/src/lib.rs
+@@ -149,10 +149,32 @@
+ 
+ pub struct DaycastService;
+ 
++// The shell supplies a narrow bridge to its live Rinx module. This service
++// never reads Matrix credentials or takes them from an app.
++type RinxBridge = fn(ServiceCall, Replier);
++static RINX_BRIDGE: std::sync::OnceLock<RinxBridge> = std::sync::OnceLock::new();
++
++pub fn register_rinx_bridge(bridge: RinxBridge) {
++    let _ = RINX_BRIDGE.set(bridge);
++}
++
+ impl HostService for DaycastService {
+     fn family(&self) -> &'static str { "storage" }
+ 
++    fn timeout(&self, call: &ServiceCall) -> std::time::Duration {
++        // Rinx's confirmation is on a different native surface, so App Hub
++        // does not see that sheet and would otherwise time out after 60 s.
++        std::time::Duration::from_secs(if call.method() == "daycast.rinx.send" { 130 } else { 60 })
++    }
++
+     fn call(&mut self, call: ServiceCall, reply: Replier, _host: &mut dyn ServiceHost) {
++        if call.method().starts_with("daycast.rinx.") {
++            match RINX_BRIDGE.get() {
++                Some(bridge) => bridge(call, reply),
++                None => reply.send(Err("此宿主尚未接入 Daycast 的 Rinx 提醒桥接。".into())),
++            }
++            return;
++        }
+         reply.send(handle(&call.app_id, call.method(), &call.args, &call.host_dir));
+     }
+ }
+--- a/apps/weather-assistant/bundle/main.splash
++++ b/apps/weather-assistant/bundle/main.splash
+@@ -63,8 +63,172 @@
+ let qa_action_mode = ""
+ let pending_action = nil
+ 
++// Rinx credentials stay in the native client; only room IDs are stored here.
++let rinx_room = ""
++let rinx_room_name = ""
++let rinx_on = false
++let rinx_rooms = []
++let rinx_status = "先在 Rinx 登录，再选择家人聊天室。"
++let rinx_sending = false
++let family_weather = []
++let family_alerts = []
++let family_check_busy = false
++let family_check_cities = []
++let family_status = "首次检查建立天气基线；之后检测降雨、温差和大风变化。"
++
++fn family_key(city){ return ("" + city.latitude) + "," + ("" + city.longitude) }
++fn family_wet(code){ return code >= 51 && code <= 99 }
++fn family_sample(city, current){
++    return {key: family_key(city), time: current.time, temp: current.temperature_2m,
++        wet: family_wet(current.weather_code), wind: current.wind_speed_10m}
++}
++fn family_change(previous, sample){
++    let reason = ""
++    if !previous.wet && sample.wet { reason = reason + "开始降水，请带伞并注意路滑。" }
++    if sample.temp <= previous.temp - 5 { reason = reason + "较上次降温 " + round(previous.temp - sample.temp) + "°C，记得添衣。" }
++    if sample.temp >= previous.temp + 5 { reason = reason + "较上次升温 " + round(sample.temp - previous.temp) + "°C，注意补水。" }
++    if previous.temp < 35 && sample.temp >= 35 { reason = reason + "气温达到 35°C，请注意防暑。" }
++    if previous.temp > 0 && sample.temp <= 0 { reason = reason + "气温降到冰点，请注意保暖。" }
++    if previous.wind < 40 && sample.wind >= 40 { reason = reason + "风速达到 40 km/h，请留意出行安全。" }
++    return reason
++}
++fn observe_family(city, data){
++    if data == nil || data.to_json().search("\"current\"") < 0 || data.current == nil { return }
++    let current = data.current
++    let fields = current.to_json()
++    if fields.search("\"time\"") < 0 || fields.search("\"temperature_2m\"") < 0 || fields.search("\"weather_code\"") < 0 || fields.search("\"wind_speed_10m\"") < 0 { return }
++    if current.time == nil || current.temperature_2m == nil || current.weather_code == nil || current.wind_speed_10m == nil { return }
++    let sample = family_sample(city, current)
++    let previous = nil
++    let remaining = []
++    for row in family_weather {
++        if row.key == sample.key { previous = row } else { remaining.push(row) }
++    }
++    // Ignore duplicate and out-of-order responses. The server supplies local ISO time.
++    if previous != nil && datetime_number(sample.time) <= datetime_number(previous.time) { return }
++    remaining.push(sample)
++    family_weather = remaining
++    if previous != nil && reminders_on {
++        let reason = family_change(previous, sample)
++        if reason != "" {
++            let alert = {id: sample.key + "/" + sample.time, city: location_text(city),
++                text: "Daycast 家庭天气提醒 · " + location_text(city) + "\n" + sample.time + "（城市当地时间）\n" + reason + "\n当前气温 " + round(sample.temp) + "°C，" + weather_text(current.weather_code) + "。数据：Open-Meteo。",
++                state: "ready", error: ""}
++            let recent = []
++            // Retain the most recent twenty alerts.
++            for i in family_alerts.len() { if i >= family_alerts.len() - 19 { recent.push(family_alerts[i]) } }
++            recent.push(alert)
++            family_alerts = recent
++            save_data()
++            if rinx_on { send_family_alert(alert.id) }
++        }
++    }
++    save_data()
++}
++fn family_alert_state(id, state, error){
++    let rows = []
++    for row in family_alerts {
++        if row.id == id { rows.push({id: row.id, city: row.city, text: row.text, state: state, error: error}) }
++        else { rows.push(row) }
++    }
++    family_alerts = rows
++    save_data()
++    ui.content.render()
++}
++fn send_family_alert(id){
++    if rinx_sending { return }
++    if rinx_room == "" { rinx_status = "请先选择 Rinx 家人聊天室。"; ui.content.render(); return }
++    let alert = nil
++    for row in family_alerts { if row.id == id && row.state != "sent" { alert = row } }
++    if alert == nil { return }
++    rinx_sending = true
++    let room = rinx_room
++    family_alert_state(id, "sending", "")
++    rinx_status = "等待 Rinx 确认；请在 Rinx 查看聊天室和正文。"
++    host.request("storage.daycast.rinx.send", {room: room, text: alert.text}, fn(r){
++        rinx_sending = false
++        if r.is_ok {
++            family_alert_state(id, "sent", "")
++            rinx_status = "Rinx 已确认消息发送成功。"
++            if rinx_on { send_next_family_alert() }
++        } else {
++            let error = if r.error == nil {"Rinx 未确认发送成功"} else {r.error}
++            family_alert_state(id, "error", error)
++            rinx_status = "发送未获确认：" + error + "。重试前请在 Rinx 检查消息。"
++        }
++        ui.content.render()
++    })
++    ui.content.render()
++}
++fn send_next_family_alert(){
++    if !reminders_on || !rinx_on || rinx_sending { return }
++    for row in family_alerts { if row.state == "ready" { send_family_alert(row.id); return } }
++}
++fn load_rinx_rooms(){
++    rinx_status = "正在读取 Rinx 聊天室…"
++    host.request("storage.daycast.rinx.rooms", {}, fn(r){
++        if r.is_ok && r.data != nil && r.data.rooms != nil {
++            rinx_rooms = r.data.rooms
++            rinx_status = if rinx_rooms.len() == 0 {"还没有已加入的聊天室；先在 Rinx 邀请家人。"} else {"选择一个家人聊天室；提醒发送前仍需在 Rinx 确认。"}
++        } else { rinx_status = "无法读取聊天室：" + r.error + "。请打开 Rinx 并登录；此功能需要支持 Daycast 桥接的 OctoSense。" }
++        ui.content.render()
++    })
++    ui.content.render()
++}
++fn choose_rinx_room(room){
++    if rinx_sending { return }
++    rinx_room = room.id
++    rinx_room_name = room.name
++    rinx_on = false
++    save_data()
++    ui.content.render()
++}
++fn toggle_rinx(){
++    if rinx_room == "" { rinx_status = "请先读取并选择家人聊天室。" }
++    else {
++        rinx_on = !rinx_on
++        // Enabling starts future alerts; older drafts stay manual.
++        if rinx_on {
++            let rows = []
++            for row in family_alerts {
++                if row.state == "ready" { rows.push({id: row.id, city: row.city, text: row.text, state: "manual", error: ""}) }
++                else { rows.push(row) }
++            }
++            family_alerts = rows
++        }
++        save_data()
++    }
++    ui.content.render()
++}
++fn check_family_city(index){
++    if index >= family_check_cities.len() { family_check_busy = false; ui.content.render(); return }
++    let city = family_check_cities[index]
++    let url = "https://api.open-meteo.com/v1/forecast?latitude=" + ("" + city.latitude) + "&longitude=" + ("" + city.longitude) + "&current=temperature_2m,weather_code,wind_speed_10m&timezone=auto"
++    net.http_request(net.HttpRequest{url: url method: net.HttpMethod.GET}) do net.HttpEvents{
++        on_response: |response| {
++            let data = response.body.to_string().parse_json()
++            if response.status_code == 200 && data != nil && data.current != nil {
++                observe_family(city, data)
++                family_status = "已检查 " + location_text(city) + " · " + data.current.time
++            } else { family_status = "家庭城市天气暂时不可用；保留上次记录，请稍后重试。" }
++            check_family_city(index + 1)
++        }
++        on_error: |_error| { family_status = "家庭天气检查失败，请检查网络。"; check_family_city(index + 1) }
++    }
++}
++fn refresh_family_weather(){
++    if family_check_busy || family_cities.len() == 0 { return }
++    family_check_busy = true
++    family_check_cities = family_cities
++    check_family_city(0)
++}
++fn poll_family_weather(){
++    if reminders_on { refresh_family_weather() }
++    start_timeout(900.0, || poll_family_weather())
++}
++
+ fn save_data(){
+-    fs.write("weather.json", {current_city: current_city, cities: cities, preferences: preferences, family_cities: family_cities, wardrobe: wardrobe, wardrobe_locations: wardrobe_locations, reminders_on: reminders_on, current_weather: current_weather}.to_json())
++    fs.write("weather.json", {current_city: current_city, cities: cities, preferences: preferences, family_cities: family_cities, rinx_room: rinx_room, rinx_room_name: rinx_room_name, rinx_on: rinx_on, family_weather: family_weather, family_alerts: family_alerts, wardrobe: wardrobe, wardrobe_locations: wardrobe_locations, reminders_on: reminders_on, current_weather: current_weather}.to_json())
+ }
+ fn load_data(){
+     let legacy_schedule = []
+@@ -82,6 +246,17 @@
+             else { wardrobe_photos = []; for i in wardrobe.len() { wardrobe_photos.push("") } }
+             if stored.schedule != nil { legacy_schedule = stored.schedule }
+             if stored.reminders_on != nil { reminders_on = stored.reminders_on }
++            if stored.to_json().search("\"rinx_room\"") >= 0 && stored.rinx_room != nil { rinx_room = stored.rinx_room }
++            if stored.to_json().search("\"rinx_room_name\"") >= 0 && stored.rinx_room_name != nil { rinx_room_name = stored.rinx_room_name }
++            if stored.to_json().search("\"rinx_on\"") >= 0 && stored.rinx_on != nil { rinx_on = stored.rinx_on }
++            if stored.to_json().search("\"family_weather\"") >= 0 && stored.family_weather != nil { family_weather = stored.family_weather }
++            if stored.to_json().search("\"family_alerts\"") >= 0 && stored.family_alerts != nil {
++                for row in stored.family_alerts {
++                    if row.state == "sending" { family_alerts.push({id: row.id, city: row.city, text: row.text, state: "error", error: "上次发送结果未知，请先在 Rinx 检查消息再决定重试。"}) }
++                    else if row.state == "ready" { family_alerts.push({id: row.id, city: row.city, text: row.text, state: "manual", error: ""}) }
++                    else { family_alerts.push(row) }
++                }
++            }
+             if stored.to_json().search("\"current_weather\"") >= 0 && stored.current_weather != nil { current_weather = stored.current_weather }
+         }
+     }
+@@ -954,7 +1129,24 @@
+                 Label{text: "关注城市与提醒偏好保存在本机" draw_text.color: muted}
+                 for i in family_cities.len() { Label{text: location_text(family_cities[i]) draw_text.color: ink} }
+                 ButtonFlat{text: "+ 添加当前城市为家人关注城市" height: 38 on_click: || add_family_city() draw_bg +: {border_radius: 18.0 color: #xeaf1f8 color_hover: #xdce8f4 color_down: #xcbddec border_size: 0.0} draw_text.color: ink}
+-                ButtonFlat{text: if reminders_on {"✓ 天气变化提醒已开启（本机设置）"} else {"开启本机天气提醒"} height: 38 on_click: || toggle_reminders() draw_bg +: {border_radius: 18.0 color: #xffeedc color_hover: #xffdfb5 color_down: #xffd28d border_size: 0.0} draw_text.color: ink}
++                ButtonFlat{text: if reminders_on {"✓ 家庭天气变化检查已开启"} else {"开启家庭天气变化检查"} height: 38 on_click: || toggle_reminders() draw_bg +: {border_radius: 18.0 color: #xffeedc color_hover: #xffdfb5 color_down: #xffd28d border_size: 0.0} draw_text.color: ink}
++            RoundedView{width: Fill height: Fit padding: 16 flow: Down spacing: 8 show_bg: true draw_bg.color: #xffffff draw_bg.border_radius: 18.0
++                Label{text: "Rinx 家庭天气提醒" draw_text.color: ink draw_text.text_style: theme.font_bold{font_size: 20}}
++                Label{width: Fill height: Fit text: "先在 Rinx 通过浏览器登录 matrix.rinx.chat，邀请家人的完整账号（如 @dad:matrix.rinx.chat）加入聊天室。" draw_text.color: muted}
++                ButtonFlat{text: "读取 Rinx 聊天室" height: 38 on_click: || load_rinx_rooms() draw_text.color: ink}
++                Label{width: Fill height: Fit text: if rinx_room == "" {"尚未选择家人聊天室"} else {"家人聊天室：" + rinx_room_name + " · " + rinx_room} draw_text.color: ink}
++                for room in rinx_rooms { ButtonFlatter{width: Fill height: Fit text: room.name + " · " + room.id on_click: || choose_rinx_room(room) draw_text.color: #xc16e24} }
++                ButtonFlat{text: if rinx_on {"✓ 变化后交给 Rinx 确认发送"} else {"启用变化后 Rinx 提醒"} height: 38 on_click: || toggle_rinx() draw_text.color: ink}
++                Label{width: Fill height: Fit text: "Daycast 打开期间每 15 分钟检查家庭城市；首次建立基线，之后检测降水、温差 ≥5°C、冰点/高温和大风变化。关闭应用后暂停。" draw_text.color: muted}
++                ButtonFlat{text: if family_check_busy {"正在检查家庭天气…"} else {"立即检查家庭天气"} height: 38 on_click: || refresh_family_weather() draw_text.color: ink}
++                Label{width: Fill height: Fit text: family_status draw_text.color: muted}
++                Label{width: Fill height: Fit text: rinx_status draw_text.color: #xa35d20}
++                for alert in family_alerts {
++                    Label{width: Fill height: Fit text: alert.text draw_text.color: ink}
++                    Label{width: Fill height: Fit text: if alert.state == "sent" {"✓ 已通过 Rinx 发送"} else if alert.state == "sending" {"等待 Rinx 确认"} else if alert.state == "error" {"未发送：" + alert.error} else {"待发送"} draw_text.color: muted}
++                    if alert.state != "sent" && alert.state != "sending" { ButtonFlatter{text: "通过 Rinx 发送 / 重试" height: 34 on_click: || send_family_alert(alert.id) draw_text.color: #xc16e24} }
++                }
++            }
+             }
+         }
+         if page == "tag-add" {
+@@ -1069,4 +1261,4 @@
+ // Schedule startup only after the app view tree has been constructed. On a
+ // cold launch, the old timer could fire while the dynamic content view was
+ // still mounting, leaving the page blank until the user forced a redraw.
+-start_timeout(0.05, || { ui.content.render(); load_data() })
++start_timeout(0.05, || { ui.content.render(); load_data(); poll_family_weather() })
+--- /dev/null
++++ b/crates/shell/src/host_tools/daycast_rinx.rs
+@@ -0,0 +1,146 @@
++//! UI-only Daycast → live Rinx bridge. Fixed methods, authenticated app id,
++//! no agent impersonation, credentials, HTTP Matrix requests or room creation.
++//! Rinx's `send_message` presents its own exact-text confirmation and uses
++//! the signed-in Matrix SDK session (including encrypted rooms).
++use std::collections::HashMap;
++use std::sync::{atomic::{AtomicU64, Ordering}, Mutex};
++use std::time::{Duration, Instant};
++use octosense_appstore::services::{Replier, ServiceCall};
++use serde_json::{json, Value};
++use super::{BusRequest, ToolOutcome};
++
++pub const PREFIX: &str = "daycast-rinx-";
++static NEXT: AtomicU64 = AtomicU64::new(1);
++static WAITING: Mutex<Option<HashMap<String, (String, Replier, Instant)>>> = Mutex::new(None);
++
++fn request(call: &ServiceCall) -> Result<(&'static str, Value), String> {
++    if !["os.weather-assistant", "weather-assistant"].contains(&call.app_id.as_str()) || call.from_sheet || !call.may_prompt {
++        return Err("Rinx 家庭提醒仅供 Daycast 使用。".into());
++    }
++    let args = call.args.as_object().ok_or("提醒参数必须是对象。")?;
++    match call.method() {
++        "daycast.rinx.rooms" if args.is_empty() => Ok(("list_rooms", json!({}))),
++        "daycast.rinx.send" => {
++            if args.len() != 2 || !args.contains_key("room") || !args.contains_key("text") {
++                return Err("仅支持聊天室 ID 和消息正文。".into());
++            }
++            let room = args["room"].as_str().unwrap_or("").trim();
++            let text = args["text"].as_str().unwrap_or("").trim();
++            if !room.starts_with('!') || !room.contains(':') || room.len() > 1024 || room.chars().any(char::is_whitespace) {
++                return Err("请先从 Rinx 已加入的聊天室中选择家人聊天室。".into());
++            }
++            if text.is_empty() || text.len() > 8192 {
++                return Err("天气提醒正文不能为空或超过 8192 字节。".into());
++            }
++            Ok(("send_message", json!({"room": room, "text": text})))
++        }
++        _ => Err("不支持的 Rinx 家庭提醒方法。".into()),
++    }
++}
++
++pub fn call(call: ServiceCall, reply: Replier) {
++    let (tool, args) = match request(&call) {
++        Ok(request) => request,
++        Err(error) => { reply.send(Err(error)); return; }
++    };
++    let mut guard = WAITING.lock().unwrap_or_else(|e| e.into_inner());
++    let waiting = guard.get_or_insert_with(HashMap::new);
++    if waiting.values().any(|(app, _, _)| app == &call.app_id) {
++        reply.send(Err("上一次 Rinx 请求尚未完成，请先处理 Rinx 的确认窗口。".into()));
++        return;
++    }
++    let id = format!("{PREFIX}{}", NEXT.fetch_add(1, Ordering::Relaxed));
++    waiting.insert(id.clone(), (call.app_id, reply, Instant::now()));
++    drop(guard);
++    super::BUS.lock().unwrap_or_else(|e| e.into_inner()).push(BusRequest::Call {
++        call_id: id, app: "rinx".into(), tool: tool.into(), args: args.to_string(),
++    });
++    makepad_widgets::makepad_platform::SignalToUI::set_ui_signal();
++}
++
++pub fn result(id: &str, outcome: ToolOutcome) {
++    let reply = WAITING.lock().unwrap_or_else(|e| e.into_inner()).as_mut().and_then(|w| w.remove(id));
++    if let Some((_, reply, _)) = reply {
++        reply.send(match outcome {
++            ToolOutcome::Ok(value) => Ok(value["data"].clone()),
++            ToolOutcome::Error { message, .. } => Err(message),
++        });
++    }
++}
++
++pub fn expire() {
++    let mut guard = WAITING.lock().unwrap_or_else(|e| e.into_inner());
++    let Some(waiting) = guard.as_mut() else { return };
++    let expired: Vec<_> = waiting.iter().filter(|(_, (_, _, start))| start.elapsed() >= Duration::from_secs(120)).map(|(id, _)| id.clone()).collect();
++    let replies: Vec<_> = expired.iter().filter_map(|id| waiting.remove(id).map(|(_, reply, _)| (id.clone(), reply))).collect();
++    drop(guard);
++    for (id, reply) in replies {
++        super::BUS.lock().unwrap_or_else(|e| e.into_inner()).push(BusRequest::Cancel { call_id: id });
++        reply.send(Err("Rinx 请求超时，发送结果未知；请先检查聊天室，再决定重试。".into()));
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    fn sample(app: &str, method: &str, args: Value) -> ServiceCall {
++        ServiceCall { app_id: app.into(), service: format!("storage.daycast.rinx.{method}"), args, from_sheet: false, may_prompt: true, host_dir: "/unused".into() }
++    }
++    #[test]
++    fn restricts_caller_methods_and_parameters() {
++        assert!(request(&sample("os.mail", "rooms", json!({}))).is_err());
++        assert!(request(&sample("os.weather-assistant", "login", json!({}))).is_err());
++        assert!(request(&sample("weather-assistant", "send", json!({"room":"@dad:matrix.rinx.chat", "text":"下雨"}))).is_err());
++        assert!(request(&sample("weather-assistant", "send", json!({"room":"!home:matrix.rinx.chat", "text":"下雨", "silent":true}))).is_err());
++        let mut sheet = sample("weather-assistant", "rooms", json!({}));
++        sheet.from_sheet = true;
++        assert!(request(&sheet).is_err());
++        sheet.from_sheet = false;
++        sheet.may_prompt = false;
++        assert!(request(&sheet).is_err());
++    }
++    #[test]
++    fn sends_only_via_rinx_confirmed_tool_and_keeps_exact_text() {
++        let (tool, args) = request(&sample("os.weather-assistant", "send", json!({"room":"!home:matrix.rinx.chat", "text":"北京开始降雨，请带伞。"}))).unwrap();
++        assert_eq!(tool, "send_message");
++        assert_eq!(args["text"], "北京开始降雨，请带伞。");
++        assert_eq!(request(&sample("weather-assistant", "rooms", json!({}))).unwrap().0, "list_rooms");
++    }
++    #[test]
++    fn host_dispatch_routes_native_results_once_without_a_matrix_session() {
++        use octosense_appstore::services::{self, ServiceHost};
++        struct NoSheet;
++        impl ServiceHost for NoSheet {
++            fn open_sheet(&mut self, _: String) { panic!("credentials never belong to Daycast") }
++            fn close_sheet(&mut self) {}
++        }
++        octosense_daycast_service::register();
++        octosense_daycast_service::register_rinx_bridge(call);
++        let heap = 812345;
++        services::dispatch(sample("weather-assistant", "rooms", json!({})), heap, 1, &mut NoSheet);
++        let requests = super::super::take_bus_requests();
++        let BusRequest::Call { call_id, app, tool, .. } = &requests[0] else { panic!("native call") };
++        assert_eq!((app.as_str(), tool.as_str()), ("rinx", "list_rooms"));
++        assert!(services::take_replies_for(&[heap]).is_empty());
++        super::super::bus_result(call_id, ToolOutcome::Ok(json!({"data":{"rooms":[{"id":"!home:matrix.rinx.chat", "name":"家人"}]}})));
++        super::super::bus_result(call_id, ToolOutcome::error("late", "late response"));
++        let replies = services::take_replies_for(&[heap]);
++        assert_eq!(replies.len(), 1);
++        assert!(replies[0].2.as_ref().unwrap().contains("家人"));
++        services::dispatch(sample("weather-assistant", "send", json!({"room":"!home:matrix.rinx.chat", "text":"下雨"})), heap, 2, &mut NoSheet);
++        let requests = super::super::take_bus_requests();
++        let BusRequest::Call { call_id, tool, .. } = &requests[0] else { panic!("native call") };
++        assert_eq!(tool, "send_message");
++        super::super::bus_result(call_id, ToolOutcome::error("denied", "person declined"));
++        assert!(services::take_replies_for(&[heap])[0].2.is_err());
++        services::dispatch(sample("weather-assistant", "rooms", json!({})), heap, 3, &mut NoSheet);
++        let requests = super::super::take_bus_requests();
++        let BusRequest::Call { call_id, .. } = &requests[0] else { panic!("native call") };
++        WAITING.lock().unwrap().as_mut().unwrap().get_mut(call_id).unwrap().2 = Instant::now() - Duration::from_secs(121);
++        let requests = super::super::take_bus_requests();
++        assert!(matches!(&requests[0], BusRequest::Cancel { call_id: cancelled } if cancelled == call_id));
++        assert!(services::take_replies_for(&[heap])[0].2.as_ref().unwrap_err().contains("结果未知"));
++        super::super::bus_result(call_id, ToolOutcome::Ok(json!({"data":{}})));
++        assert!(services::take_replies_for(&[heap]).is_empty());
++    }
++}
