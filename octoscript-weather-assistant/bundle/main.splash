@@ -756,8 +756,7 @@ fn confirm_ai_event(){
     }
     for existing in schedule {
         if datetime_number(event.start) < datetime_number(existing.end) && datetime_number(existing.start) < datetime_number(event.end) {
-            app_status = "确认前发现日程冲突，未添加；请让 Daycast 重新安排"
-            pending_event = nil
+            app_status = "确认前发现日程冲突，未添加；请修改草案时间或让 Daycast 重新安排"
             ui.content.render()
             return
         }
@@ -847,6 +846,17 @@ fn schedule_context(){
     for event in schedule { rows.push({title: event.title start: event.start end: event.end}) }
     rows
 }
+fn conversation_context(){
+    let rows = []
+    // The current question is sent separately; keep the preceding six turns.
+    for i in chat_messages.len() {
+        if i >= chat_messages.len() - 12 && chat_messages[i].lane == "person" {
+            let message = chat_messages[i]
+            rows.push({role: if message.speaker == "我" {"user"} else {"assistant"}, content: message.text})
+        }
+    }
+    rows
+}
 fn hourly_context(){
     let rows = []
     if current_weather != nil && current_weather.hourly != nil {
@@ -871,8 +881,14 @@ fn handle_weather_question(result, ticket, action_mode){
             let proposed_end = ""
             if output.event_start != nil { proposed_start = normalize_datetime(output.event_start) }
             if output.event_end != nil { proposed_end = normalize_datetime(output.event_end) }
-            if output.event_title != nil && valid_datetime(proposed_start) && valid_datetime(proposed_end) && datetime_number(proposed_start) < datetime_number(proposed_end) {
-                proposed = {title: output.event_title start: proposed_start end: proposed_end reason: output.event_reason}
+            if output.event_title != nil && output.event_title.trim() != "" && valid_datetime(proposed_start) && valid_datetime(proposed_end) && datetime_number(proposed_start) < datetime_number(proposed_end) {
+                let reason = if output.event_reason == nil {""} else {output.event_reason}
+                for existing in schedule {
+                    if datetime_number(proposed_start) < datetime_number(existing.end) && datetime_number(existing.start) < datetime_number(proposed_end) {
+                        reason = reason + "\n与“" + existing.title + "”重叠，请修改时间后再确认。"
+                    }
+                }
+                proposed = {title: output.event_title.trim() start: proposed_start end: proposed_end reason: reason}
             } else {
                 reply = reply + "\n我没能识别出准确的日期和起止时间，请补充具体时间，我再为你生成可确认的日程。"
             }
@@ -895,9 +911,11 @@ fn handle_weather_question(result, ticket, action_mode){
 fn send_weather_question(){
     question_text = ui.question.text().trim()
     if question_text == "" { return }
+    let history = conversation_context()
+    let previous_draft = pending_event
     chat_messages.push({speaker: "我", lane: "person", text: question_text})
     let display_text = question_text
-    let action_mode = qa_action_mode
+    let action_mode = if qa_action_mode == "" {"chat"} else {qa_action_mode}
     let schedule_intent = action_mode == "create_schedule"
     create_schedule_mode = false
     qa_action_mode = ""
@@ -911,7 +929,8 @@ fn send_weather_question(){
     app_status = "Daycast 正在结合天气和你的安排思考…"
     ui.content.render()
     let task = "你是 Daycast 的天气、衣橱和日程顾问。结合用户问题、天气、衣橱、偏好、家庭城市和已有日程回答。只使用提供的数据，不虚构天气。weather_date 是今天的本地日期，请据此换算明天等相对日期。用户询问活动时间，或明确表达想做某活动时，查看日程找不冲突的合适时段；天气适合度只根据给出的逐小时预报判断，预报覆盖不到的日期不要声称天气合适。可以提出一个待确认的日程草案，但绝不能声称已添加，也不能自行添加。只有确实适合提出具体时间时 propose_event=true，event_start 和 event_end 必须严格使用 YYYY-MM-DDTHH:mm，例如 2026-10-05T08:00；只能返回年月日和 24 小时制时分，不得使用‘明天’、空格分隔、秒或时区。活动时长优先按用户描述推断，没说时按 1 小时。没有明确活动意图时 propose_event=false。普通问答中，单纯说‘提醒我’或询问闹铃时不要创建日程草案；说明 Daycast 可通过创建日程模式添加事项，不要让用户去设置闹铃。"
-    if schedule_intent { task = task + " 本条消息处于用户明确开启的‘创建日程’模式：将用户消息理解为要在 Daycast 日程表中创建事项，而不是设置闹铃。即使用户说‘提醒我’，也请提取活动标题和具体日期时间，结合现有日程检查冲突；信息足够时必须返回 propose_event=true 和严格格式的时间，信息不足时在 answer 中询问缺少的日期或时间并返回 propose_event=false。未获得用户点击确认前，不能声称日程已添加。没有说明活动时长时，请按 15 分钟安排短暂事项（如吃药），其他事项按 1 小时安排。" }
+    task = task + " 对话连续性：conversation_history 是此前的用户与助理对话，question 是最新一句；previous_draft 是当前尚未保存的草案，existing_schedule 才是已保存日程。‘那就生成草案吧’、‘帮我安排’、‘换个时间’等承接语必须结合前文最近的活动和时间理解；前文已说明洗澡等活动时，不得再次询问要安排什么，不得把旧草案说成已保存。日程草案输出规则：用户明确说出要做的活动与时间，或承接前文要求生成草案，且可确定标题和时间时，普通聊天也必须返回 propose_event=true，并填写 event_title、event_start、event_end、event_reason，让应用显示可确认的草案卡；不要只口头说‘可以生成’、‘已拟草案’，也不要引导用户重复使用创建日程模式。指定时间有冲突仍可生成该时间的待调整草案，并说明冲突；没有用户同意不得擅自改动用户指定时间或已保存日程。用户明确接受前文推荐时间时才采用推荐时间。仅在前文和本句合起来仍缺少关键活动或时间时追问。任何草案都要等用户点击确认并添加，聊天中的‘生成草案’不等于授权保存。没有说明时长时，洗澡默认 30 分钟，并在草案理由中注明；其他活动默认 1 小时。"
+    if schedule_intent { task = task + " 本条消息处于用户明确开启的‘创建日程’模式：将用户消息理解为要在 Daycast 日程表中创建事项，而不是设置闹铃。即使用户说‘提醒我’，也请提取活动标题和具体日期时间，结合现有日程检查冲突；信息足够时必须返回 propose_event=true 和严格格式的时间，信息不足时在 answer 中询问缺少的日期或时间并返回 propose_event=false。未获得用户点击确认前，不能声称日程已添加。没有说明活动时长时，请按 15 分钟安排短暂事项（如吃药），洗澡按 30 分钟，其他事项按 1 小时安排。" }
     if action_mode == "add_clothing" { task = task + " 本条消息处于添加衣物模式：只提取用户明确提到的一类衣物，可选提取明确说出的存放位置，不得推断或编造衣物、位置或照片。若衣物类型不清楚，在 answer 中追问并设 propose_action=false；明确时 propose_action=true、action_kind='add_clothing'、action_value 为衣物类型、action_location 为位置或空字符串。仅生成待确认内容，不要声称已保存。" }
     if action_mode == "create_preference" { task = task + " 本条消息处于创建天气偏好模式：提取一条用户明确表达的长期天气/体感偏好，保留简洁原意；若不是偏好或意思不清楚就追问并设 propose_action=false。明确时 propose_action=true、action_kind='create_preference'、action_value 为偏好文字、action_location 为空字符串。仅生成待确认内容，不要声称已保存。" }
     if action_mode == "add_family_city" { task = task + " 本条消息处于添加家庭城市模式：提取用户明确说出的一个家人所在城市名称，不得猜测城市或输出经纬度。城市不明确就追问并设 propose_action=false；明确时 propose_action=true、action_kind='add_family_city'、action_value 为用户说的城市名、action_location 为空字符串。应用会查找地点并让用户确认后再保存。" }
@@ -919,6 +938,8 @@ fn send_weather_question(){
         task: task
         input: {
             question: display_text
+            conversation_history: history
+            previous_draft: previous_draft
             intent_mode: action_mode
             city: location_text(current_city)
             weather: if current_weather == nil {nil} else {current_weather.current}

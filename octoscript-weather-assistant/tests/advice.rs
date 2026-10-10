@@ -369,6 +369,106 @@ fn changed_preferences_discard_old_ai_reply() {
 }
 
 #[test]
+fn ordinary_chat_stages_a_schedule_draft_without_saving_it() {
+    let result = run(r#"
+        let entered = "我今天晚上11点半要洗澡"
+        ui.question = {text: fn(){entered} set_text: fn(value){entered = value}}
+        send_weather_question()
+        pending[0].callback({is_ok: true data: {output: {
+            answer: "已为你生成洗澡草案，请确认。" propose_event: true
+            event_title: "洗澡" event_start: "2026-10-10T23:30" event_end: "2026-10-11T00:00" event_reason: "按你指定的时间，尚未添加。"
+            propose_action: false action_kind: "" action_value: "" action_location: ""
+        }}})
+        {mode: pending[0].args.input.intent_mode draft: pending_event saved: schedule.len() calls: pending.len()}.to_json()
+    "#);
+    assert_eq!(result["mode"], "chat");
+    assert_eq!(result["draft"]["title"], "洗澡");
+    assert_eq!(result["draft"]["start"], "2026-10-10T23:30");
+    assert_eq!(result["saved"], 0);
+    assert_eq!(result["calls"], 1, "a model reply must not save the draft");
+}
+
+#[test]
+fn schedule_followup_receives_previous_conversation_and_reviewed_draft() {
+    let result = run(r#"
+        chat_messages = [
+            {speaker: "我" lane: "person" text: "我今天晚上11点半要洗澡"}
+            {speaker: "Daycast" lane: "person" text: "23:30与吃饭重叠，建议改到22:30。"}
+        ]
+        pending_event = {title: "洗澡" start: "2026-10-10T22:30" end: "2026-10-10T23:00" reason: "避开吃饭"}
+        let entered = "那你给我生成一个草案吧"
+        ui.question = {text: fn(){entered} set_text: fn(value){entered = value}}
+        send_weather_question()
+        pending[0].args.to_json()
+    "#);
+    Request::from_args(&result).unwrap();
+    assert_eq!(result["input"]["question"], "那你给我生成一个草案吧");
+    assert_eq!(result["input"]["conversation_history"], json!([
+        {"role":"user", "content":"我今天晚上11点半要洗澡"},
+        {"role":"assistant", "content":"23:30与吃饭重叠，建议改到22:30。"}
+    ]));
+    assert_eq!(result["input"]["previous_draft"]["title"], "洗澡");
+}
+
+#[test]
+fn conflicting_chat_draft_stays_visible_for_time_correction() {
+    let result = run(r#"
+        schedule = [{title: "出去吃饭" start: "2026-10-10T23:00" end: "2026-10-11T00:00"}]
+        handle_weather_question({is_ok: true data: {output: {
+            answer: "洗澡时间与吃饭重叠，请调整时间。" propose_event: true
+            event_title: "洗澡" event_start: "2026-10-10T23:30" event_end: "2026-10-11T00:00" event_reason: "与出去吃饭重叠，请修改时间。"
+            propose_action: false action_kind: "" action_value: "" action_location: ""
+        }}}, qa_generation, "chat")
+        confirm_ai_event()
+        {draft: pending_event saved: schedule.len() calls: pending.len() status: app_status}.to_json()
+    "#);
+    assert_eq!(result["draft"]["title"], "洗澡");
+    assert_eq!(result["saved"], 1);
+    assert_eq!(result["calls"], 0);
+    assert!(result["status"].as_str().unwrap().contains("冲突"));
+}
+
+#[test]
+fn conversation_context_bounds_history_and_keeps_speaker_roles() {
+    let result = run(r#"
+        for i in 9 {
+            chat_messages.push({speaker: "我" lane: "person" text: "用户 " + i})
+            chat_messages.push({speaker: "Daycast" lane: "person" text: "回答 " + i})
+        }
+        conversation_context().to_json()
+    "#);
+    let history = result.as_array().unwrap();
+    assert_eq!(history.len(), 12);
+    assert_eq!(history[0], json!({"role":"user", "content":"用户 3"}));
+    assert_eq!(history[11], json!({"role":"assistant", "content":"回答 8"}));
+}
+
+#[test]
+fn a_late_model_reply_cannot_replace_the_latest_schedule_draft() {
+    let result = run(r#"
+        let entered = "我今晚11点出去吃饭"
+        ui.question = {text: fn(){entered} set_text: fn(value){entered = value}}
+        send_weather_question()
+        entered = "我今晚11点半要洗澡"
+        send_weather_question()
+        pending[1].callback({is_ok: true data: {output: {
+            answer: "洗澡草案，请确认。" propose_event: true
+            event_title: "洗澡" event_start: "2026-10-10T23:30" event_end: "2026-10-11T00:00" event_reason: "洗澡30分钟"
+            propose_action: false action_kind: "" action_value: "" action_location: ""
+        }}})
+        pending[0].callback({is_ok: true data: {output: {
+            answer: "吃饭草案，请确认。" propose_event: true
+            event_title: "吃饭" event_start: "2026-10-10T23:00" event_end: "2026-10-11T00:00" event_reason: "旧回复"
+            propose_action: false action_kind: "" action_value: "" action_location: ""
+        }}})
+        {draft: pending_event messages: chat_messages.len() saved: schedule.len()}.to_json()
+    "#);
+    assert_eq!(result["draft"]["title"], "洗澡");
+    assert_eq!(result["messages"], 3);
+    assert_eq!(result["saved"], 0);
+}
+
+#[test]
 fn weather_question_clears_input_and_reports_model_error() {
     let result = run(r#"
         let entered = "hi"

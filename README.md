@@ -9,6 +9,7 @@ Daycast 是运行在 OctoSense 上的天气与生活安排助手，版本 **v0.4
 - 完善逐小时预报、未来七天趋势、日出日落、跨天日程和日期编辑
 - 支持家庭关注城市与天气提醒偏好
 - 修复家庭天气卡片中的日期显示问题
+- 修复普通聊天的日程草案显示与连续对话；冲突草案保留供修改
 - Daycast 应用清单版本更新为 `0.4.4`
 
 ## 项目入口
@@ -17,6 +18,7 @@ Daycast 是运行在 OctoSense 上的天气与生活安排助手，版本 **v0.4
 - 应用清单：[`octoscript-weather-assistant/bundle/manifest.json`](octoscript-weather-assistant/bundle/manifest.json)
 - 宿主接入说明：[`octoscript-weather-assistant/host-integration`](octoscript-weather-assistant/host-integration)
 - UI 改版记录与验证截图：[`octoscript-weather-assistant/docs/ui-redesign-2026-10-10`](octoscript-weather-assistant/docs/ui-redesign-2026-10-10)
+- 连续对话与草案测试：[`octoscript-weather-assistant/docs/dialogue-fix-2026-10-10`](octoscript-weather-assistant/docs/dialogue-fix-2026-10-10)
 - 隐私说明：[`octoscript-weather-assistant/PRIVACY.md`](octoscript-weather-assistant/PRIVACY.md)
 
 ## 运行
@@ -40,5 +42,5 @@ python <OctoScript-App-Design-Flow 路径>\tools\octo shot 8141 preview.png
 当前版本：**daycast-v0.4.4**
 
 - Git 标签：[`daycast-v0.4.4`](https://github.com/buqizixv/shaotangjiabing/releases/tag/daycast-v0.4.4)
-- 最新提交：[`5d95270`](https://github.com/buqizixv/shaotangjiabing/commit/5d9527086d14b2c479aebd7866a76e28905a819a)
+- UI 日期修复提交：[`5d95270`](https://github.com/buqizixv/shaotangjiabing/commit/5d9527086d14b2c479aebd7866a76e28905a819a)
 - 许可证：Apache-2.0
