@@ -1363,13 +1363,13 @@ today_scroll := ScrollYView{width: Fill height: Fill flow: Down spacing: 20
                         }
                     }
                 }
-                RoundedView{width: Fill{weight: 100 basis: 300 shrink: 1 min: if wide_layout {280} else {0}} height: 172 padding: 22 flow: Down spacing: 18 draw_bg.color: paper draw_bg.border_radius: 22.0
+                RoundedView{width: Fill{weight: 100 basis: 300 shrink: 1 min: if wide_layout {280} else {0}} height: Fit padding: 22 flow: Down spacing: 18 draw_bg.color: paper draw_bg.border_radius: 22.0
                     View{width: Fill height: Fit flow: Right align: Align{y: 0.5}
                         Label{width: Fill text: "也关心，他们的天气。" padding: 0 draw_text.color: ink draw_text.text_style: DaycastBold{font_size: 16}}
                         ButtonFlatter{text: "›" height: 26 on_click: || goto("mine") draw_text +: {color: muted color_hover: orange color_down: orange}}
                     }
                     if family_cities.len() == 0 { Label{width: Fill text: "还没有关注家人城市，可在「我的」里添加。" padding: 0 draw_text.color: muted draw_text.text_style.font_size: 12} }
-                    View{width: Fill height: Fill flow: Right spacing: 14
+                    View{width: Fill height: Fit flow: Right spacing: 14
                         for i in min(family_cities.len(), 3) {
                             let sample = family_current(family_cities[i])
                             View{width: Fill height: Fit flow: Down spacing: 8
