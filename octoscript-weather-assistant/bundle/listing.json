@@ -1,23 +1,33 @@
 {
   "schema": 1,
   "subtitle": "天气、衣橱、日程与出行建议",
-  "description": "查看天气，管理衣橱和日程，并获得结合衣物与安排的出行建议。衣橱可记录衣物类型、家中存放位置，并选取或拍摄衣物照片；照片和衣橱数据保存在本机。问答可让 AI 帮你添加衣物、创建天气偏好、添加家庭城市或创建日程，确认后才会保存。",
+  "description": "天气、衣橱、日程、天气偏好与家庭城市管理。AI 起草资料后由用户确认保存；家庭天气提醒与 Rinx 发送需要配套的 OctoSense 宿主接入。衣物照片留在本机，拍摄能力取决于宿主支持。",
   "category": "weather",
-  "keywords": ["天气", "城市", "预报", "衣橱", "日程", "出行", "Daycast"],
-  "screenshots": [
-    "screenshots/城市管理-已保存地点.png",
-    "screenshots/城市搜索-热门地点入口.png",
-    "screenshots/城市搜索-晋字地点结果.png",
-    "screenshots/我的-天气偏好与家庭提醒设置.png"
+  "keywords": [
+    "天气",
+    "城市",
+    "预报",
+    "衣橱",
+    "日程",
+    "出行",
+    "Daycast"
   ],
-  "icon": "assets/Daycast天气晴云轨迹图标.svg",
-  "platforms": ["windows"],
+  "screenshots": [
+    "screenshots/today.png",
+    "screenshots/sky.png",
+    "screenshots/mine.png",
+    "screenshots/family.png"
+  ],
+  "icon": "assets/daycast.svg",
+  "platforms": [
+    "windows"
+  ],
   "publisher": {
     "name": "buqizixv",
     "support": "https://github.com/buqizixv/shaotangjiabing/issues",
     "privacy_policy_url": "https://github.com/buqizixv/shaotangjiabing/blob/main/octoscript-weather-assistant/PRIVACY.md"
   },
-  "release_notes": "0.4.2：修复衣橱存放位置行未显示的问题；保存后会回显位置，位置在衣物卡片中单独显示。",
+  "release_notes": "0.4.4：完成全部 Daycast 页面的原生 UI 改版，统一字体、图标、卡片、响应式布局和表单；完善真实预报、跨天日程及家庭提醒设置。",
   "age_rating": "all",
   "license": "Apache-2.0"
 }

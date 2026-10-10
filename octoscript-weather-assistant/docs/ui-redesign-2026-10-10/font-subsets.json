@@ -1,0 +1,17 @@
+{
+  "coverage": "GB2312, UI source text, Latin, combining marks, punctuation and symbols present in the original font",
+  "fonts": [
+    {
+      "file": "NotoSansSC-Regular.ttf",
+      "bytes": 2441588,
+      "glyphs": 8316,
+      "sha256": "2f0235eb5a7964730903bd8dea7f8f5d93b3a5df095cc8bb01038f30c215cf1f"
+    },
+    {
+      "file": "NotoSansSC-Bold.ttf",
+      "bytes": 2442628,
+      "glyphs": 8316,
+      "sha256": "94ceec6b1ae4458c9e6148ced1cbc851538bcfa99cd839263e42cf9b4986db3f"
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+# Bundle integrity hashes exact file bytes; preserve them across checkouts.
+bundle/** -text

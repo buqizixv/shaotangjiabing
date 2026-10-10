@@ -1,0 +1,1078 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 33582788..65a40181 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -7622,6 +7622,16 @@ dependencies = [
+  "serde_json",
+ ]
+ 
++[[package]]
++name = "octosense-daycast-service"
++version = "0.1.0"
++dependencies = [
++ "chrono",
++ "octosense-appstore",
++ "serde",
++ "serde_json",
++]
++
+ [[package]]
+ name = "octosense-home"
+ version = "0.1.0"
+@@ -7794,6 +7804,7 @@ dependencies = [
+  "octosense-appcard",
+  "octosense-appstore",
+  "octosense-calendar-service",
++ "octosense-daycast-service",
+  "octosense-l0-chat",
+  "octosense-mail-service",
+  "octosense-news-service",
+diff --git a/Cargo.toml b/Cargo.toml
+index 0bd5cb95..0ebee751 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -32,6 +32,7 @@ members = [
+     "apps/news/host-service",
+     "apps/mail/host-service",
+     "apps/calendar/host-service",
++    "apps/weather-assistant/host-service",
+     "apps/ai-providers/config",
+     "apps/ai-providers/host-service",
+     "apps/appcard/module",
+@@ -155,6 +156,7 @@ octosense-llm-config = { path = "apps/ai-providers/config" }
+ octosense-llm-service = { path = "apps/ai-providers/host-service" }
+ octosense-mail-service = { path = "apps/mail/host-service" }
+ octosense-calendar-service = { path = "apps/calendar/host-service" }
++octosense-daycast-service = { path = "apps/weather-assistant/host-service" }
+ octosense-news-service = { path = "apps/news/host-service" }
+ octos-app = { path = "apps/appcard/app/app", default-features = false }
+ octos-app-store = { path = "apps/appcard/app/crates/octos-app-store" }
+diff --git a/apps/ai-providers/host-service/Cargo.toml b/apps/ai-providers/host-service/Cargo.toml
+index 5142ed28..6dd68a5f 100644
+--- a/apps/ai-providers/host-service/Cargo.toml
++++ b/apps/ai-providers/host-service/Cargo.toml
+@@ -47,3 +47,7 @@ qrcode = { version = "0.14", default-features = false }
+ [[test]]
+ name = "photos_memories"
+ path = "../../photos/tests/memories.rs"
++
++[[test]]
++name = "weather_advice"
++path = "../../weather-assistant/tests/advice.rs"
+diff --git a/apps/weather-assistant/host-service/Cargo.toml b/apps/weather-assistant/host-service/Cargo.toml
+new file mode 100644
+index 00000000..b23e5c49
+--- /dev/null
++++ b/apps/weather-assistant/host-service/Cargo.toml
+@@ -0,0 +1,12 @@
++[package]
++name = "octosense-daycast-service"
++version = "0.1.0"
++edition = "2021"
++license = "Apache-2.0"
++publish = false
++
++[dependencies]
++octosense-appstore = { workspace = true }
++serde = { workspace = true }
++serde_json = { workspace = true }
++chrono = { workspace = true }
+diff --git a/apps/weather-assistant/host-service/src/lib.rs b/apps/weather-assistant/host-service/src/lib.rs
+new file mode 100644
+index 00000000..0a5f75a8
+--- /dev/null
++++ b/apps/weather-assistant/host-service/src/lib.rs
+@@ -0,0 +1,184 @@
++//! Daycast's host-owned app storage for its schedule. Keeping it here lets Daycast's UI and its
++//! agent use the same private data, while the shell can ask for approval
++//! before an agent writes an event.
++
++use chrono::{Local, NaiveDate, NaiveDateTime};
++use octosense_appstore::services::{HostService, Replier, ServiceCall, ServiceHost};
++use serde::{Deserialize, Serialize};
++use serde_json::{json, Value};
++use std::path::{Path, PathBuf};
++use std::sync::Mutex;
++
++pub const APP: &str = "os.weather-assistant";
++pub const AGENT_ADD_TOOL: &str = "daycast.schedule.add";
++const EVENTS_MAX: usize = 500;
++
++/// A narrow write tool for Daycast's own agent and for other agents Daycast
++/// explicitly grants. The shell's relay always asks before this act runs.
++pub fn agent_tool_declaration() -> Value {
++    json!({
++        "name": AGENT_ADD_TOOL,
++        "description": "Add one event to Daycast's private schedule. Require a title, local start and local end in YYYY-MM-DDTHH:mm format. Ask for missing date, time or duration. The host will show the exact event and ask the person before saving; do not claim it was added until this tool returns success.",
++        "input_schema": {"type":"object","properties":{
++            "title":{"type":"string","minLength":1,"maxLength":80},
++            "start":{"type":"string","minLength":1,"maxLength":32},
++            "end":{"type":"string","minLength":1,"maxLength":32}
++        },"required":["title","start","end"],"additionalProperties":false},
++        // Schedule writes are treated as approval-required actions even
++        // though they remain private and reversible.
++        "risk":"destructive",
++        "outward":true,
++        "confirm":"host",
++        "shareable":true,
++        "auto_approvable":false
++    })
++}
++
++#[derive(Clone, Debug, Serialize, Deserialize)]
++pub struct Event {
++    pub id: String,
++    pub title: String,
++    pub start: String,
++    pub end: String,
++}
++
++fn store_path(host_dir: &Path) -> PathBuf {
++    host_dir.join("daycast").join("schedule.json")
++}
++
++fn load(host_dir: &Path) -> Result<Vec<Event>, String> {
++    let path = store_path(host_dir);
++    let bytes = match std::fs::read(&path) {
++        Ok(bytes) => bytes,
++        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
++        Err(error) => return Err(format!("Daycast cannot read its schedule: {error}")),
++    };
++    let mut events: Vec<Event> = serde_json::from_slice(&bytes).map_err(|error| format!("Daycast's schedule is invalid: {error}"))?;
++    events.sort_by(|a, b| a.start.cmp(&b.start).then(a.id.cmp(&b.id)));
++    Ok(events)
++}
++
++fn save(host_dir: &Path, events: &[Event]) -> Result<(), String> {
++    let path = store_path(host_dir);
++    let dir = path.parent().expect("schedule path has parent");
++    std::fs::create_dir_all(dir).map_err(|e| format!("Daycast cannot save its schedule: {e}"))?;
++    let temp = dir.join(format!(".schedule-{}.tmp", std::process::id()));
++    std::fs::write(&temp, serde_json::to_vec_pretty(events).expect("events serialize"))
++        .map_err(|e| format!("Daycast cannot save its schedule: {e}"))?;
++    #[cfg(windows)]
++    if path.exists() {
++        std::fs::remove_file(&path).map_err(|e| format!("Daycast cannot replace its schedule: {e}"))?;
++    }
++    std::fs::rename(&temp, &path).map_err(|e| format!("Daycast cannot save its schedule: {e}"))
++}
++
++fn text<'a>(args: &'a Value, key: &str) -> &'a str {
++    args.get(key).and_then(Value::as_str).unwrap_or("").trim()
++}
++
++fn parse_time(value: &str) -> Result<NaiveDateTime, String> {
++    NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M")
++        .or_else(|_| NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M"))
++        .or_else(|_| NaiveDate::parse_from_str(value, "%Y-%m-%d").map(|d| d.and_hms_opt(0, 0, 0).unwrap()))
++        .map_err(|_| format!("{value:?} is not a local date/time; use YYYY-MM-DDTHH:mm"))
++}
++
++fn stamp(value: NaiveDateTime) -> String {
++    value.format("%Y-%m-%dT%H:%M").to_string()
++}
++
++fn overlaps(a: &Event, start: &str, end: &str) -> bool {
++    a.start < end.to_string() && start < a.end.as_str()
++}
++
++/// Calls from Daycast's UI and from its contained agent share this store.
++/// `schedule.list` may include the app's old local schedule once; it is
++/// merged by title and time, making migration safe to repeat.
++pub fn handle(app: &str, method: &str, args: &Value, host_dir: &Path) -> Result<Value, String> {
++    if app != APP {
++        return Err("the Daycast schedule belongs to Daycast".into());
++    }
++    static STORE: Mutex<()> = Mutex::new(());
++    let _guard = STORE.lock().unwrap_or_else(|error| error.into_inner());
++    let mut events = load(host_dir)?;
++    match method {
++        "daycast.schedule.list" => {
++            if let Some(legacy) = args.get("legacy").and_then(Value::as_array) {
++                for row in legacy {
++                    let title = row.get("title").and_then(Value::as_str).unwrap_or("").trim();
++                    let start = row.get("start").and_then(Value::as_str).unwrap_or("").trim();
++                    let end = row.get("end").and_then(Value::as_str).unwrap_or("").trim();
++                    let (Ok(start_time), Ok(end_time)) = (parse_time(start), parse_time(end)) else { continue };
++                    let (start, end) = (stamp(start_time), stamp(end_time));
++                    if title.is_empty() || start_time >= end_time || events.iter().any(|e| e.title == title && e.start == start && e.end == end) { continue }
++                    events.push(Event { id: format!("daycast-{}", Local::now().timestamp_nanos_opt().unwrap_or_default()), title: title.chars().take(80).collect(), start, end });
++                }
++                if events.len() > EVENTS_MAX { events.truncate(EVENTS_MAX); }
++                save(host_dir, &events)?;
++            }
++            events.sort_by(|a, b| a.start.cmp(&b.start).then(a.id.cmp(&b.id)));
++            Ok(json!({"events": events}))
++        }
++        "daycast.schedule.add" => {
++            let title = text(args, "title");
++            if title.is_empty() || title.chars().count() > 80 { return Err("A Daycast event title must be 1–80 characters.".into()) }
++            if events.len() >= EVENTS_MAX { return Err("Daycast's schedule is full.".into()) }
++            let start = parse_time(text(args, "start"))?;
++            let end = parse_time(text(args, "end"))?;
++            if end <= start { return Err("The event end must be later than its start.".into()) }
++            let (start, end) = (stamp(start), stamp(end));
++            if events.iter().any(|event| overlaps(event, &start, &end)) {
++                return Err("That time overlaps an existing Daycast event. Choose another time.".into());
++            }
++            let event = Event { id: format!("daycast-{}", Local::now().timestamp_nanos_opt().unwrap_or_default()), title: title.to_string(), start, end };
++            events.push(event.clone());
++            save(host_dir, &events)?;
++            Ok(json!({"event": event}))
++        }
++        "daycast.schedule.remove" => {
++            let id = text(args, "id");
++            let before = events.len();
++            events.retain(|event| event.id != id);
++            if events.len() == before { return Err("That Daycast event no longer exists.".into()) }
++            save(host_dir, &events)?;
++            Ok(json!({"removed": true}))
++        }
++        other => Err(format!("Daycast has no method {other:?}")),
++    }
++}
++
++pub struct DaycastService;
++
++// The shell supplies a narrow bridge to its live Rinx module. This service
++// never reads Matrix credentials or takes them from an app.
++type RinxBridge = fn(ServiceCall, Replier);
++static RINX_BRIDGE: std::sync::OnceLock<RinxBridge> = std::sync::OnceLock::new();
++
++pub fn register_rinx_bridge(bridge: RinxBridge) {
++    let _ = RINX_BRIDGE.set(bridge);
++}
++
++impl HostService for DaycastService {
++    fn family(&self) -> &'static str { "storage" }
++
++    fn timeout(&self, call: &ServiceCall) -> std::time::Duration {
++        // Rinx's confirmation is on a different native surface, so App Hub
++        // does not see that sheet and would otherwise time out after 60 s.
++        std::time::Duration::from_secs(if call.method() == "daycast.rinx.send" { 130 } else { 60 })
++    }
++
++    fn call(&mut self, call: ServiceCall, reply: Replier, _host: &mut dyn ServiceHost) {
++        if call.method().starts_with("daycast.rinx.") {
++            match RINX_BRIDGE.get() {
++                Some(bridge) => bridge(call, reply),
++                None => reply.send(Err("此宿主尚未接入 Daycast 的 Rinx 提醒桥接。".into())),
++            }
++            return;
++        }
++        reply.send(handle(&call.app_id, call.method(), &call.args, &call.host_dir));
++    }
++}
++
++pub fn register() {
++    octosense_appstore::services::register_host_service(Box::new(DaycastService));
++}
+diff --git a/apps/weather-assistant/tests/advice.rs b/apps/weather-assistant/tests/advice.rs
+new file mode 100644
+index 00000000..dbc64476
+--- /dev/null
++++ b/apps/weather-assistant/tests/advice.rs
+@@ -0,0 +1,385 @@
++use makepad_script::*;
++use makepad_script::{parser::ScriptParser, tokenizer::ScriptTokenizer};
++use octosense_llm_service::complete::{schema::Schema, Request};
++use serde_json::{json, Value};
++
++const SCRIPT: &str = include_str!("../bundle/main.splash");
++const ENV: &str = r#"
++let fs = {write: fn(path, data){}}
++let widget = {render: fn(){}}
++let ui = {content: widget}
++fn round(value){ value }
++let control = {set_text: fn(value){} set_visible: fn(value){}}
++ui.schedule_mode_button = control
++ui.clothing_mode_button = control
++ui.preference_mode_button = control
++ui.family_city_mode_button = control
++ui.schedule_hint = control
++let pending = []
++let timers = []
++fn start_timeout(seconds, callback){ timers.push(callback); timers.len() }
++let host = {request: fn(method, args, callback){ pending.push({method: method args: args callback: callback}) }}
++"#;
++const WEATHER: &str = r#"{
++    current: {temperature_2m: 18 apparent_temperature: 16 precipitation: 0 weather_code: 0}
++    daily: {
++        time: ["2026-10-04"] temperature_2m_min: [9] temperature_2m_max: [23]
++        precipitation_probability_max: [65] uv_index_max: [5]
++    }
++}"#;
++
++fn run(body: &str) -> Value {
++    let mut host = ScriptVmHost::new((), ());
++    let mut vm = ScriptVm { host: &mut host, bx: Box::new(ScriptVmBase::new()) };
++    vm.bx.captured_errors = Some(Vec::new());
++    let logic = SCRIPT.split_once("\nSolidView{").expect("UI boundary").0;
++    let value = vm.with_instruction_limit(4_000_000, |vm| vm.eval(ScriptMod {
++        file: "weather_advice_test.splash".into(),
++        code: format!("{ENV}\n{logic}\n{body}\n;"),
++        ..Default::default()
++    }));
++    let errors = vm.take_errors();
++    assert!(errors.is_empty(), "{errors:?}: Splash errors executing {body}");
++    assert!(!value.is_err(), "Splash returned {value:?}");
++    let text = vm.bx.heap.string_with(value, |_, s| s.to_string()).expect("JSON result");
++    serde_json::from_str(&text).expect(&text)
++}
++
++#[test]
++fn complete_weather_page_parses() {
++    let mut heap = ScriptHeap::default();
++    let mut tokenizer = ScriptTokenizer::default();
++    tokenizer.tokenize(SCRIPT, &mut heap);
++    tokenizer.tokenize("\n;", &mut heap);
++    let mut parser = ScriptParser::default();
++    parser.set_emit_errors(false);
++    parser.parse(&tokenizer, "weather_assistant.splash", (0, 0), &[]);
++    assert!(!parser.had_error, "{:?}", parser.diagnostics());
++}
++
++#[test]
++fn agenda_keeps_indices_and_includes_overnight_events() {
++    let result = run(r#"
++        current_weather = {current: {time: "2026-10-10T10:30"} daily: {time: ["2026-10-10", "2026-10-11"]}}
++        schedule = [
++            {title: "跨夜" start: "2026-10-09T23:00" end: "2026-10-10T01:00"}
++            {title: "今天" start: "2026-10-10T10:00" end: "2026-10-10T11:00"}
++            {title: "未来" start: "2026-11-01T10:00" end: "2026-11-01T11:00"}
++        ]
++        {rows: events_on_date("2026-10-10") dates: schedule_dates()}.to_json()
++    "#);
++    assert_eq!(result["rows"][0]["index"], 0);
++    assert_eq!(result["rows"][1]["index"], 1);
++    assert_eq!(result["rows"].as_array().unwrap().len(), 2);
++    assert!(result["dates"].as_array().unwrap().contains(&json!("2026-11-01")));
++}
++
++#[test]
++fn forecast_handles_short_arrays_and_actual_sunrise_sunset() {
++    let result = run(r#"
++        current_weather = {current: {time: "2026-10-10T10:30"} daily: {
++            time: ["2026-10-10", "2026-10-11"] temperature_2m_min: [10, 11] temperature_2m_max: [22]
++            weather_code: [0] precipitation_probability_max: [] sunrise: ["2026-10-10T06:00"] sunset: ["2026-10-10T18:00"]
++        }}
++        let days = forecast_days()
++        {days: days before: forecast_night("2026-10-10T05:00") daytime: forecast_night("2026-10-10T12:00")
++        sunset: forecast_night("2026-10-10T18:00") missing: forecast_night("2026-10-11T22:00")
++        moon: hourly_weather_asset({night: true code: 0}) sunny: hourly_weather_asset({night: false code: 0})}.to_json()
++    "#);
++    assert_eq!(result["days"].as_array().unwrap().len(), 1);
++    assert!(result["days"][0]["rain"].is_null());
++    assert_eq!(result["before"], true);
++    assert_eq!(result["daytime"], false);
++    assert_eq!(result["sunset"], true);
++    assert_eq!(result["missing"], false);
++    assert_eq!(result["moon"], "compact-moon.svg");
++    assert_eq!(result["sunny"], "compact-sunny.svg");
++}
++
++#[test]
++fn split_schedule_form_preserves_host_contract_and_rejects_conflicts() {
++    let result = run(r#"
++        schedule_date = "2026-10-10"
++        schedule_title = "散步"
++        schedule_start = "16:30"
++        schedule_end = "17:15"
++        submit_schedule_form()
++        let args = pending[0].args
++        schedule = [{title: "会议" start: "2026-10-10T16:00" end: "2026-10-10T17:00"}]
++        submit_schedule_form()
++        let conflicts = pending.len()
++        let status = app_status
++        schedule_date = "2026-10-11"
++        submit_schedule_form()
++        {args: args requests: conflicts status: status revised: pending[1].args draft: schedule_start}.to_json()
++    "#);
++    assert_eq!(result["args"]["start"], "2026-10-10T16:30");
++    assert_eq!(result["args"]["end"], "2026-10-10T17:15");
++    assert_eq!(result["requests"], 1);
++    assert!(result["status"].as_str().unwrap().contains("重叠"));
++    assert_eq!(result["revised"]["start"], "2026-10-11T16:30");
++    assert_eq!(result["draft"], "16:30");
++}
++
++#[test]
++fn today_forecast_starts_after_current_time_and_handles_short_or_missing_arrays() {
++    let result = run(r#"
++        current_weather = {
++            current: {time: "2026-10-10T10:30"}
++            daily: {time: ["2026-10-10"]}
++            hourly: {
++                time: ["2026-10-10T09:00", "2026-10-10T10:00", "2026-10-10T11:00", "2026-10-10T12:00", "2026-10-10T13:00"]
++                temperature_2m: [10, 12, 15, 18, 20]
++                weather_code: [0, 0, 2]
++                precipitation_probability: [0, 0, 5]
++            }
++        }
++        let future = today_hourly()
++        let curve = [today_curve_y(future, 0), today_curve_y(future, 1)]
++        current_weather.current.time = "2026-10-10T14:00"
++        let exhausted = today_hourly()
++        current_weather = nil
++        {future: future curve: curve exhausted: exhausted empty: today_hourly()}.to_json()
++    "#);
++    assert_eq!(result["future"][0]["time"], "11:00");
++    assert_eq!(result["future"][1]["time"], "13:00");
++    assert!(result["future"][1]["code"].is_null());
++    assert!(result["future"][1]["rain"].is_null());
++    assert_eq!(result["curve"][0], 0.8);
++    assert!((result["curve"][1].as_f64().unwrap() - 0.2).abs() < 1e-6);
++    assert_eq!(result["exhausted"], json!([]));
++    assert_eq!(result["empty"], json!([]));
++}
++
++#[test]
++fn today_schedule_filters_date_and_family_weather_matches_coordinates() {
++    let result = run(r#"
++        current_weather = {current: {time: "2026-10-10T10:30"}}
++        schedule = [
++            {title: "昨天" start: "2026-10-09T10:00" end: "2026-10-09T11:00"}
++            {title: "今天" start: "2026-10-10T16:30" end: "2026-10-10T17:30"}
++            {title: "明天" start: "2026-10-11T10:00" end: "2026-10-11T11:00"}
++        ]
++        let city = {latitude: 40 longitude: 116}
++        family_weather = [{key: "40,116" temp: 18 time: "2026-10-10T10:00"}]
++        {events: today_events() date: today_date() family: family_current(city) missing: family_current({latitude: 31 longitude: 121})}.to_json()
++    "#);
++    assert_eq!(result["events"].as_array().unwrap().len(), 1);
++    assert_eq!(result["events"][0]["title"], "今天");
++    assert_eq!(result["date"], "2026-10-10");
++    assert_eq!(result["family"]["temp"], 18);
++    assert!(result["missing"].is_null());
++}
++
++#[test]
++fn family_alerts_baseline_deduplicate_and_ignore_stale_weather() {
++    let result = run(r#"
++        let city = {name: "北京" country: "中国" admin1: "北京" latitude: 40 longitude: 116}
++        observe_family(city, {current: {time: "2026-10-09T10:00" temperature_2m: 20 weather_code: 0 wind_speed_10m: 10}})
++        let baseline_count = family_alerts.len()
++        observe_family(city, {current: {time: "2026-10-09T11:00" temperature_2m: 14 weather_code: 61 wind_speed_10m: 45}})
++        observe_family(city, {current: {time: "2026-10-09T11:00" temperature_2m: 14 weather_code: 61 wind_speed_10m: 45}})
++        observe_family(city, {current: {time: "2026-10-09T09:00" temperature_2m: 30 weather_code: 0 wind_speed_10m: 5}})
++        {baseline: baseline_count alerts: family_alerts weather: family_weather requests: pending.len()}.to_json()
++    "#);
++    assert_eq!(result["baseline"], 0);
++    assert_eq!(result["alerts"].as_array().unwrap().len(), 1);
++    let text = result["alerts"][0]["text"].as_str().unwrap();
++    assert!(text.contains("开始降水") && text.contains("降温 6") && text.contains("40 km/h"));
++    assert_eq!(result["weather"][0]["time"], "2026-10-09T11:00");
++    assert_eq!(result["requests"], 0, "Rinx is opt-in");
++}
++
++#[test]
++fn family_changes_use_each_city_and_respect_master_switch() {
++    let result = run(r#"
++        let a = {name: "北京" country: "中国" admin1: "北京" latitude: 40 longitude: 116}
++        let b = {name: "上海" country: "中国" admin1: "上海" latitude: 31 longitude: 121}
++        let clear = {current: {time: "2026-10-09T10:00" temperature_2m: 20 weather_code: 0 wind_speed_10m: 10}}
++        observe_family(a, clear)
++        observe_family(b, clear)
++        reminders_on = false
++        observe_family(b, {current: {time: "2026-10-09T11:00" temperature_2m: 14 weather_code: 61 wind_speed_10m: 45}})
++        observe_family(a, {current: {time: "2026-10-09T11:00" temperature_2m: 21 weather_code: 0 wind_speed_10m: 11}})
++        {alerts: family_alerts.len() weather: family_weather}.to_json()
++    "#);
++    assert_eq!(result["alerts"], 0);
++    assert_eq!(result["weather"].as_array().unwrap().len(), 2);
++}
++
++#[test]
++fn rinx_send_waits_for_actual_success_and_failure_can_retry() {
++    let result = run(r#"
++        rinx_room = "!home:matrix.rinx.chat"
++        family_alerts = [{id: "a" city: "北京" text: "北京降雨" state: "ready" error: ""}]
++        send_family_alert("a")
++        let before = family_alerts[0].state
++        send_family_alert("a")
++        pending[0].callback({is_ok: false error: "The person declined to send."})
++        let failed = family_alerts[0].state
++        send_family_alert("a")
++        pending[1].callback({is_ok: true data: {}})
++        send_family_alert("a")
++        {before: before failed: failed state: family_alerts[0].state calls: pending.len() method: pending[0].method args: pending[0].args}.to_json()
++    "#);
++    assert_eq!(result["before"], "sending");
++    assert_eq!(result["failed"], "error");
++    assert_eq!(result["state"], "sent");
++    assert_eq!(result["calls"], 2);
++    assert_eq!(result["method"], "storage.daycast.rinx.send");
++    assert_eq!(result["args"], json!({"room":"!home:matrix.rinx.chat", "text":"北京降雨"}));
++}
++
++#[test]
++fn rinx_enabled_changes_queue_behind_one_confirmation() {
++    let result = run(r#"
++        rinx_on = true
++        rinx_room = "!home:matrix.rinx.chat"
++        let a = {name: "北京" country: "中国" admin1: "北京" latitude: 40 longitude: 116}
++        let b = {name: "上海" country: "中国" admin1: "上海" latitude: 31 longitude: 121}
++        let clear = {current: {time: "2026-10-09T10:00" temperature_2m: 20 weather_code: 0 wind_speed_10m: 10}}
++        let rain = {current: {time: "2026-10-09T11:00" temperature_2m: 20 weather_code: 61 wind_speed_10m: 10}}
++        observe_family(a, clear)
++        observe_family(b, clear)
++        observe_family(a, rain)
++        observe_family(b, rain)
++        let in_flight = pending.len()
++        pending[0].callback({is_ok: true data: {}})
++        let after = pending.len()
++        pending[1].callback({is_ok: true data: {}})
++        {in_flight: in_flight after: after states: [family_alerts[0].state family_alerts[1].state]}.to_json()
++    "#);
++    assert_eq!(result["in_flight"], 1);
++    assert_eq!(result["after"], 2);
++    assert_eq!(result["states"], json!(["sent", "sent"]));
++}
++
++#[test]
++fn family_extreme_thresholds_and_small_changes() {
++    let result = run(r#"
++        let normal = {temp: 30 wet: false wind: 10}
++        {small: family_change(normal, {temp: 31 wet: false wind: 11})
++         hot: family_change(normal, {temp: 35 wet: false wind: 10})
++         cold: family_change({temp: 1 wet: false wind: 10}, {temp: 0 wet: false wind: 10})}.to_json()
++    "#);
++    assert_eq!(result["small"], "");
++    assert!(result["hot"].as_str().unwrap().contains("防暑"));
++    assert!(result["cold"].as_str().unwrap().contains("冰点"));
++}
++
++#[test]
++fn missing_observation_fields_do_not_destroy_city_baselines() {
++    let result = run(r#"
++        let city = {name: "北京" country: "中国" admin1: "北京" latitude: 40 longitude: 116}
++        observe_family(city, {})
++        observe_family(city, {current: {time: "2026-10-09T10:00"}})
++        {weather: family_weather.len() alerts: family_alerts.len()}.to_json()
++    "#);
++    assert_eq!(result, json!({"weather":0, "alerts":0}));
++}
++
++#[test]
++fn legacy_storage_without_rinx_fields_remains_readable() {
++    let result = run(r#"
++        fs.exists = fn(path){true}
++        fs.read = fn(path){"{\"current_city\":{\"name\":\"北京\",\"latitude\":40,\"longitude\":116},\"cities\":[],\"preferences\":[],\"family_cities\":[],\"wardrobe\":[],\"wardrobe_locations\":[],\"wardrobe_photos\":[],\"schedule\":[],\"reminders_on\":true}"}
++        refresh_weather = fn(){}
++        load_data()
++        {room: rinx_room enabled: rinx_on weather: family_weather alerts: family_alerts}.to_json()
++    "#);
++    assert_eq!(result, json!({"room":"", "enabled":false, "weather":[], "alerts":[]}));
++}
++
++#[test]
++fn saved_weather_without_photo_or_legacy_schedule_fields_can_restart() {
++    let result = run(r#"
++        fs.exists = fn(path){true}
++        fs.read = fn(path){"{\"current_city\":{\"name\":\"北京\",\"latitude\":40,\"longitude\":116},\"cities\":[],\"preferences\":[],\"family_cities\":[],\"wardrobe\":[\"外套\"],\"wardrobe_locations\":[\"卧室\"],\"reminders_on\":true}"}
++        refresh_weather = fn(){}
++        load_data()
++        let written = ""
++        fs.write = fn(path, data){written = data}
++        save_data()
++        {photos: wardrobe_photos saved: written.parse_json()}.to_json()
++    "#);
++    assert_eq!(result["photos"], json!([""]));
++    assert_eq!(result["saved"]["wardrobe_photos"], json!([""]));
++    assert_eq!(result["saved"]["wardrobe_locations"], json!(["卧室"]));
++}
++
++#[test]
++fn enabling_rinx_leaves_old_drafts_manual() {
++    let result = run(r#"
++        rinx_room = "!home:matrix.rinx.chat"
++        family_alerts = [{id: "old" city: "北京" text: "北京降雨" state: "ready" error: ""}]
++        toggle_rinx()
++        send_next_family_alert()
++        {state: family_alerts[0].state calls: pending.len() enabled: rinx_on}.to_json()
++    "#);
++    assert_eq!(result, json!({"state":"manual", "calls":0, "enabled":true}));
++}
++
++#[test]
++fn weather_bundle_has_model_access_and_current_digest() {
++    use octosense_app_contract::{digest_dir, parse, resolve, HostLimits};
++    let bundle = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../weather-assistant/bundle");
++    let digest = digest_dir(&bundle).unwrap();
++    let manifest: Value = serde_json::from_str(include_str!("../bundle/manifest.json")).unwrap();
++    assert_eq!(manifest["integrity"]["bundle_blake3"], digest);
++    let parsed = parse(&manifest.to_string()).unwrap();
++    assert!(resolve(&parsed, &HostLimits::system()).unwrap().allows("model"));
++}
++
++#[test]
++fn ai_request_contains_weather_and_selected_preferences() {
++    let result = run(&format!(r#"
++        current_weather = {WEATHER}
++        preferences = ["怕冷" "关注降雨"]
++        request_outing_advice()
++        timers[0]()
++        {{count: pending.len() method: pending[0].method args: pending[0].args}}.to_json()
++    "#));
++    assert_eq!(result["count"], 1);
++    assert_eq!(result["method"], "model.complete");
++    let args = &result["args"];
++    Request::from_args(args).unwrap();
++    let schema = Schema::compile(&args["schema"]).unwrap();
++    schema.validate(&json!({"advice": "体感16℃，带件外套；今天有降水可能，带伞。"})).unwrap();
++    assert_eq!(args["input"]["preferences"], json!(["怕冷", "关注降雨"]));
++    assert_eq!(args["input"]["apparent_temperature_c"], 16);
++    assert_eq!(args["input"]["daily_precipitation_probability_max_percent"], 65);
++    assert_eq!(args["input"]["daily_uv_index_max"], 5);
++}
++
++#[test]
++fn changed_preferences_discard_old_ai_reply() {
++    let result = run(&format!(r#"
++        current_weather = {WEATHER}
++        preferences = ["怕冷"]
++        request_outing_advice()
++        timers[0]()
++        toggle_preference("关注降雨")
++        pending[0].callback({{is_ok: true data: {{output: {{advice: "旧建议"}}}}}})
++        timers[2]()
++        pending[1].callback({{is_ok: true data: {{output: {{advice: "带外套和雨伞"}}}}}})
++        {{advice: advice_text preferences: preferences}}.to_json()
++    "#));
++    assert_eq!(result["advice"], "带外套和雨伞");
++    assert_eq!(result["preferences"], json!(["怕冷", "关注降雨"]));
++}
++
++#[test]
++fn weather_question_clears_input_and_reports_model_error() {
++    let result = run(r#"
++        let entered = "hi"
++        let question = {text: fn(){entered} set_text: fn(value){entered = value}}
++        ui.question = question
++        send_weather_question()
++        pending[0].callback({is_ok: false error: "unexpected argument '--host-managed' found"})
++        {entered: entered request: pending[0].method prompt: chat_messages[0].text error: chat_messages[1].text}.to_json()
++    "#);
++    assert_eq!(result["entered"], "");
++    assert_eq!(result["request"], "model.complete");
++    assert_eq!(result["prompt"], "hi");
++    assert_eq!(result["error"], "AI 暂时不可用，请检查 AI 设置后重试。");
++}
+diff --git a/crates/shell/Cargo.toml b/crates/shell/Cargo.toml
+index d38631c1..2f6c4a82 100644
+--- a/crates/shell/Cargo.toml
++++ b/crates/shell/Cargo.toml
+@@ -51,6 +51,7 @@ octosense-l0-chat = { workspace = true }
+ octosense-ai-host = { workspace = true }
+ octosense-mail-service = { workspace = true, optional = true }
+ octosense-calendar-service = { workspace = true, optional = true }
++octosense-daycast-service = { workspace = true, optional = true }
+ octosense-news-service = { workspace = true, optional = true }
+ # App Hub's host-service registry: the `glance` service registers into it.
+ octosense-appstore = { workspace = true, optional = true }
+@@ -100,6 +101,7 @@ octosense-app-contract = { workspace = true }
+ octosense-mail-service = { workspace = true }
+ octosense-news-service = { workspace = true }
+ octosense-calendar-service = { workspace = true }
++octosense-daycast-service = { workspace = true }
+ octosense-ai-host = { workspace = true, features = ["llm"] }
+ 
+ [features]
+@@ -120,7 +122,7 @@ app-reference = ["dep:octosense-reference"]
+ app-sheets = ["dep:makepad-sheets"]
+ app-terminal = ["dep:makepad-terminal"]
+ app-appcard = ["dep:octosense-appcard", "octos-core"]
+-app-hub = ["dep:octosense-app-hub-app", "dep:octosense-appstore", "dep:octosense-app-policy", "dep:octosense-app-hub", "dep:octosense-app-contract", "dep:octosense-mail-service", "dep:octosense-news-service", "dep:octosense-calendar-service", "octosense-ai-host/llm"]
++app-hub = ["dep:octosense-app-hub-app", "dep:octosense-appstore", "dep:octosense-app-policy", "dep:octosense-app-hub", "dep:octosense-app-contract", "dep:octosense-mail-service", "dep:octosense-news-service", "dep:octosense-calendar-service", "dep:octosense-daycast-service", "octosense-ai-host/llm"]
+ app-calculator = ["dep:makepad-calculator"]
+ app-clock = ["dep:makepad-clock"]
+ app-notes = ["dep:makepad-notes"]
+diff --git a/crates/shell/src/agents.rs b/crates/shell/src/agents.rs
+index cea44d39..f5d6dcdf 100644
+--- a/crates/shell/src/agents.rs
++++ b/crates/shell/src/agents.rs
+@@ -49,6 +49,7 @@ pub(crate) static FACTORY_TESTS: Mutex<()> = Mutex::new(());
+ /// The host tools the system chat registers on the system session.
+ pub const LIST_TOOL: &str = "agents.list";
+ pub const ASK_TOOL: &str = "agents.ask";
++pub const DAYCAST_ADD_TOOL: &str = "agents.daycast_schedule_add";
+ pub const PROVISION_TOOL: &str = "agents.provision";
+ pub const STATUS_TOOL: &str = "agents.status";
+ /// Their owner, as the kernel shows it.
+@@ -357,7 +358,7 @@ pub fn system_note() -> Option<String> {
+         return None;
+     }
+     let parts: Vec<String> = apps.iter().map(note_part).collect();
+-    Some(format!("[OctoSense: apps with an agent: {}. peer_send_input takes a peer slug from peer_list, never an app id; never guess a peer that peer_list does not show.]", parts.join("; ")))
++    Some(format!("[OctoSense: apps with an agent: {}. To add a Daycast schedule event from this system chat, use agents.daycast_schedule_add; it writes to Daycast after the person approves the exact title and time. peer_send_input takes a peer slug from peer_list, never an app id; never guess a peer that peer_list does not show.]", parts.join("; ")))
+ }
+ 
+ /// Strip [`system_note`] from a message's text (the transcript keeps it; the
+@@ -378,7 +379,7 @@ pub fn declarations() -> Vec<Value> {
+         json!({
+             "name": LIST_TOOL,
+             "app": OWNER,
+-            "description": "List every app on this device that has an agent, whether the person allowed it, whether its peer is ready (in peer_list), and its peer slug (`peer_slug`: pass it to peer_send_input; the app id is not a peer). Use it before delegating to an app's agent, and when peer_list does not show the app you need.",
++            "description": "List every app on this device that has an agent, whether the person allowed it, whether its peer is ready (in peer_list), and its peer slug (`peer_slug`: pass it to peer_send_input; the app id is not a peer). Use it before delegating to an app's agent, and when peer_list does not show the app you need. To add an event directly to Daycast's private schedule, use agents.daycast_schedule_add; the person approves each exact event.",
+             "input_schema": {"type": "object", "properties": {}, "additionalProperties": false},
+             "risk": "read",
+         }),
+@@ -417,13 +418,23 @@ pub fn declarations() -> Vec<Value> {
+             "input_schema":{"type":"object","properties":{"app":{"type":"string","enum":["os.mail"]}},"required":["app"],"additionalProperties":false},
+             "risk":"read"
+         }),
++        json!({
++            "name": DAYCAST_ADD_TOOL, "app": OWNER,
++            "description": "Add an event to Daycast's private schedule. Use when the person asks in this system chat to add a Daycast event. The title, local start and local end are required in YYYY-MM-DDTHH:mm format; ask the person for any missing date, time or duration before calling. Checks for an overlap, then shows the exact event in a host approval sheet. This always needs the person's live approval and cannot be covered by a standing rule.",
++            "input_schema": {"type":"object","properties":{
++                "title":{"type":"string","minLength":1,"maxLength":80},
++                "start":{"type":"string","minLength":1,"maxLength":32},
++                "end":{"type":"string","minLength":1,"maxLength":32}
++            },"required":["title","start","end"],"additionalProperties":false},
++            "risk":"destructive", "confirm":"host", "auto_approvable":false
++        }),
+     ]);
+     tools
+ }
+ 
+ /// Whether `tool` is one of [`declarations`].
+ pub fn is_agents_tool(tool: &str) -> bool {
+-    tool == LIST_TOOL || tool == ASK_TOOL || cfg!(any(feature = "app-hub", native_mobile)) && matches!(tool, PROVISION_TOOL | STATUS_TOOL)
++    tool == LIST_TOOL || tool == ASK_TOOL || cfg!(any(feature = "app-hub", native_mobile)) && matches!(tool, PROVISION_TOOL | STATUS_TOOL | DAYCAST_ADD_TOOL)
+ }
+ 
+ /// Answer the system agent's call of one of [`declarations`] (the system
+@@ -441,6 +452,17 @@ pub fn call(tool: &str, args: &Value) -> ToolOutcome {
+             Ok(value) => ToolOutcome::Ok(value),
+             Err(error) => ToolOutcome::error("agent_status", error),
+         },
++        #[cfg(any(feature = "app-hub", native_mobile))]
++        DAYCAST_ADD_TOOL => {
++            let Some(root) = octosense_app_hub_app::data_root_if_set() else {
++                return ToolOutcome::error("daycast_unavailable", "Daycast storage is not available yet");
++            };
++            let host_dir = root.join(".host");
++            match octosense_daycast_service::handle("os.weather-assistant", "daycast.schedule.add", args, &host_dir) {
++                Ok(value) => ToolOutcome::Ok(value),
++                Err(error) => ToolOutcome::error("daycast_schedule", error),
++            }
++        }
+         // Answered at once (the system chat holds the call instead, until
+         // the person answered: system_chat `pump`).
+         ASK_TOOL => match ask_app(args) {
+diff --git a/crates/shell/src/apps.rs b/crates/shell/src/apps.rs
+index a7ac3134..518bf3b8 100644
+--- a/crates/shell/src/apps.rs
++++ b/crates/shell/src/apps.rs
+@@ -204,6 +204,8 @@ fn register_host_services() {
+         // published the same way.
+         octosense_calendar_service::register();
+         octosense_calendar_service::on_publish_card(Some(std::sync::Arc::new(|app: &str, args: serde_json::Value| crate::glance::publish_for(app, &args))));
++        octosense_daycast_service::register();
++        octosense_daycast_service::register_rinx_bridge(crate::host_tools::daycast_rinx::call);
+         register_news();
+         // After every service of the shell's own: the notice service never
+         // stands in for one.
+diff --git a/crates/shell/src/host_tools/daycast_rinx.rs b/crates/shell/src/host_tools/daycast_rinx.rs
+new file mode 100644
+index 00000000..43b3db29
+--- /dev/null
++++ b/crates/shell/src/host_tools/daycast_rinx.rs
+@@ -0,0 +1,146 @@
++//! UI-only Daycast → live Rinx bridge. Fixed methods, authenticated app id,
++//! no agent impersonation, credentials, HTTP Matrix requests or room creation.
++//! Rinx's `send_message` presents its own exact-text confirmation and uses
++//! the signed-in Matrix SDK session (including encrypted rooms).
++use std::collections::HashMap;
++use std::sync::{atomic::{AtomicU64, Ordering}, Mutex};
++use std::time::{Duration, Instant};
++use octosense_appstore::services::{Replier, ServiceCall};
++use serde_json::{json, Value};
++use super::{BusRequest, ToolOutcome};
++
++pub const PREFIX: &str = "daycast-rinx-";
++static NEXT: AtomicU64 = AtomicU64::new(1);
++static WAITING: Mutex<Option<HashMap<String, (String, Replier, Instant)>>> = Mutex::new(None);
++
++fn request(call: &ServiceCall) -> Result<(&'static str, Value), String> {
++    if !["os.weather-assistant", "weather-assistant"].contains(&call.app_id.as_str()) || call.from_sheet || !call.may_prompt {
++        return Err("Rinx 家庭提醒仅供 Daycast 使用。".into());
++    }
++    let args = call.args.as_object().ok_or("提醒参数必须是对象。")?;
++    match call.method() {
++        "daycast.rinx.rooms" if args.is_empty() => Ok(("list_rooms", json!({}))),
++        "daycast.rinx.send" => {
++            if args.len() != 2 || !args.contains_key("room") || !args.contains_key("text") {
++                return Err("仅支持聊天室 ID 和消息正文。".into());
++            }
++            let room = args["room"].as_str().unwrap_or("").trim();
++            let text = args["text"].as_str().unwrap_or("").trim();
++            if !room.starts_with('!') || !room.contains(':') || room.len() > 1024 || room.chars().any(char::is_whitespace) {
++                return Err("请先从 Rinx 已加入的聊天室中选择家人聊天室。".into());
++            }
++            if text.is_empty() || text.len() > 8192 {
++                return Err("天气提醒正文不能为空或超过 8192 字节。".into());
++            }
++            Ok(("send_message", json!({"room": room, "text": text})))
++        }
++        _ => Err("不支持的 Rinx 家庭提醒方法。".into()),
++    }
++}
++
++pub fn call(call: ServiceCall, reply: Replier) {
++    let (tool, args) = match request(&call) {
++        Ok(request) => request,
++        Err(error) => { reply.send(Err(error)); return; }
++    };
++    let mut guard = WAITING.lock().unwrap_or_else(|e| e.into_inner());
++    let waiting = guard.get_or_insert_with(HashMap::new);
++    if waiting.values().any(|(app, _, _)| app == &call.app_id) {
++        reply.send(Err("上一次 Rinx 请求尚未完成，请先处理 Rinx 的确认窗口。".into()));
++        return;
++    }
++    let id = format!("{PREFIX}{}", NEXT.fetch_add(1, Ordering::Relaxed));
++    waiting.insert(id.clone(), (call.app_id, reply, Instant::now()));
++    drop(guard);
++    super::BUS.lock().unwrap_or_else(|e| e.into_inner()).push(BusRequest::Call {
++        call_id: id, app: "rinx".into(), tool: tool.into(), args: args.to_string(),
++    });
++    makepad_widgets::makepad_platform::SignalToUI::set_ui_signal();
++}
++
++pub fn result(id: &str, outcome: ToolOutcome) {
++    let reply = WAITING.lock().unwrap_or_else(|e| e.into_inner()).as_mut().and_then(|w| w.remove(id));
++    if let Some((_, reply, _)) = reply {
++        reply.send(match outcome {
++            ToolOutcome::Ok(value) => Ok(value["data"].clone()),
++            ToolOutcome::Error { message, .. } => Err(message),
++        });
++    }
++}
++
++pub fn expire() {
++    let mut guard = WAITING.lock().unwrap_or_else(|e| e.into_inner());
++    let Some(waiting) = guard.as_mut() else { return };
++    let expired: Vec<_> = waiting.iter().filter(|(_, (_, _, start))| start.elapsed() >= Duration::from_secs(120)).map(|(id, _)| id.clone()).collect();
++    let replies: Vec<_> = expired.iter().filter_map(|id| waiting.remove(id).map(|(_, reply, _)| (id.clone(), reply))).collect();
++    drop(guard);
++    for (id, reply) in replies {
++        super::BUS.lock().unwrap_or_else(|e| e.into_inner()).push(BusRequest::Cancel { call_id: id });
++        reply.send(Err("Rinx 请求超时，发送结果未知；请先检查聊天室，再决定重试。".into()));
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    fn sample(app: &str, method: &str, args: Value) -> ServiceCall {
++        ServiceCall { app_id: app.into(), service: format!("storage.daycast.rinx.{method}"), args, from_sheet: false, may_prompt: true, host_dir: "/unused".into() }
++    }
++    #[test]
++    fn restricts_caller_methods_and_parameters() {
++        assert!(request(&sample("os.mail", "rooms", json!({}))).is_err());
++        assert!(request(&sample("os.weather-assistant", "login", json!({}))).is_err());
++        assert!(request(&sample("weather-assistant", "send", json!({"room":"@dad:matrix.rinx.chat", "text":"下雨"}))).is_err());
++        assert!(request(&sample("weather-assistant", "send", json!({"room":"!home:matrix.rinx.chat", "text":"下雨", "silent":true}))).is_err());
++        let mut sheet = sample("weather-assistant", "rooms", json!({}));
++        sheet.from_sheet = true;
++        assert!(request(&sheet).is_err());
++        sheet.from_sheet = false;
++        sheet.may_prompt = false;
++        assert!(request(&sheet).is_err());
++    }
++    #[test]
++    fn sends_only_via_rinx_confirmed_tool_and_keeps_exact_text() {
++        let (tool, args) = request(&sample("os.weather-assistant", "send", json!({"room":"!home:matrix.rinx.chat", "text":"北京开始降雨，请带伞。"}))).unwrap();
++        assert_eq!(tool, "send_message");
++        assert_eq!(args["text"], "北京开始降雨，请带伞。");
++        assert_eq!(request(&sample("weather-assistant", "rooms", json!({}))).unwrap().0, "list_rooms");
++    }
++    #[test]
++    fn host_dispatch_routes_native_results_once_without_a_matrix_session() {
++        use octosense_appstore::services::{self, ServiceHost};
++        struct NoSheet;
++        impl ServiceHost for NoSheet {
++            fn open_sheet(&mut self, _: String) { panic!("credentials never belong to Daycast") }
++            fn close_sheet(&mut self) {}
++        }
++        octosense_daycast_service::register();
++        octosense_daycast_service::register_rinx_bridge(call);
++        let heap = 812345;
++        services::dispatch(sample("weather-assistant", "rooms", json!({})), heap, 1, &mut NoSheet);
++        let requests = super::super::take_bus_requests();
++        let BusRequest::Call { call_id, app, tool, .. } = &requests[0] else { panic!("native call") };
++        assert_eq!((app.as_str(), tool.as_str()), ("rinx", "list_rooms"));
++        assert!(services::take_replies_for(&[heap]).is_empty());
++        super::super::bus_result(call_id, ToolOutcome::Ok(json!({"data":{"rooms":[{"id":"!home:matrix.rinx.chat", "name":"家人"}]}})));
++        super::super::bus_result(call_id, ToolOutcome::error("late", "late response"));
++        let replies = services::take_replies_for(&[heap]);
++        assert_eq!(replies.len(), 1);
++        assert!(replies[0].2.as_ref().unwrap().contains("家人"));
++        services::dispatch(sample("weather-assistant", "send", json!({"room":"!home:matrix.rinx.chat", "text":"下雨"})), heap, 2, &mut NoSheet);
++        let requests = super::super::take_bus_requests();
++        let BusRequest::Call { call_id, tool, .. } = &requests[0] else { panic!("native call") };
++        assert_eq!(tool, "send_message");
++        super::super::bus_result(call_id, ToolOutcome::error("denied", "person declined"));
++        assert!(services::take_replies_for(&[heap])[0].2.is_err());
++        services::dispatch(sample("weather-assistant", "rooms", json!({})), heap, 3, &mut NoSheet);
++        let requests = super::super::take_bus_requests();
++        let BusRequest::Call { call_id, .. } = &requests[0] else { panic!("native call") };
++        WAITING.lock().unwrap().as_mut().unwrap().get_mut(call_id).unwrap().2 = Instant::now() - Duration::from_secs(121);
++        let requests = super::super::take_bus_requests();
++        assert!(matches!(&requests[0], BusRequest::Cancel { call_id: cancelled } if cancelled == call_id));
++        assert!(services::take_replies_for(&[heap])[0].2.as_ref().unwrap_err().contains("结果未知"));
++        super::super::bus_result(call_id, ToolOutcome::Ok(json!({"data":{}})));
++        assert!(services::take_replies_for(&[heap]).is_empty());
++    }
++}
+diff --git a/crates/shell/src/host_tools/mod.rs b/crates/shell/src/host_tools/mod.rs
+index c982358b..a448baff 100644
+--- a/crates/shell/src/host_tools/mod.rs
++++ b/crates/shell/src/host_tools/mod.rs
+@@ -41,6 +41,8 @@ pub mod schema;
+ pub mod toolbox;
+ #[cfg(any(feature = "app-hub", native_mobile))]
+ pub mod script_apps;
++#[cfg(any(feature = "app-hub", native_mobile))]
++pub mod daycast_rinx;
+ 
+ #[cfg(test)]
+ mod tests;
+@@ -244,12 +246,19 @@ static BUS: Mutex<Vec<BusRequest>> = Mutex::new(Vec::new());
+ 
+ /// The shell drains these after [`pump`] and hands them to its AI bus.
+ pub fn take_bus_requests() -> Vec<BusRequest> {
++    #[cfg(any(feature = "app-hub", native_mobile))]
++    daycast_rinx::expire();
+     std::mem::take(&mut *BUS.lock().unwrap_or_else(|e| e.into_inner()))
+ }
+ 
+ /// The bus answered (or failed) one of the relay's calls (`call_id` is the
+ /// bus id, [`BUS_PREFIX`] + the kernel's).
+ pub fn bus_result(call_id: &str, outcome: ToolOutcome) {
++    #[cfg(any(feature = "app-hub", native_mobile))]
++    if call_id.starts_with(daycast_rinx::PREFIX) {
++        daycast_rinx::result(call_id, outcome);
++        return;
++    }
+     if let Some(kernel_id) = call_id.strip_prefix(BUS_PREFIX) {
+         submit(Event::BusResult { call_id: kernel_id.to_string(), outcome });
+     }
+diff --git a/crates/shell/src/host_tools/script_apps.rs b/crates/shell/src/host_tools/script_apps.rs
+index 0e74882c..448c9452 100644
+--- a/crates/shell/src/host_tools/script_apps.rs
++++ b/crates/shell/src/host_tools/script_apps.rs
+@@ -144,19 +144,62 @@ pub fn install(app: &str, loaded: Loaded, host_dir: PathBuf) {
+     // Its toolbox grant, from the same manifest (ADR 0002 §6, #151).
+     #[cfg(feature = "toolbox-peers")]
+     super::toolbox::grant_manifest(app, &loaded.manifest);
+-    let executor = HostServiceExecutor { app: app.to_string(), tools: loaded.host_service_tools, families: loaded.families, host_dir };
+-    super::set_executor(app, Some(Arc::new(executor)));
++    let executor = HostServiceExecutor { app: app.to_string(), tools: loaded.host_service_tools, families: loaded.families, host_dir: host_dir.clone() };
++    if app == octosense_daycast_service::APP {
++        super::set_executor(app, Some(Arc::new(DaycastExecutor { services: executor, host_dir })));
++    } else {
++        super::set_executor(app, Some(Arc::new(executor)));
++    }
+ }
+ 
+ /// Load `app`'s agent block from App Hub: a system app's packed bundle, or
+ /// an installed one.
+ pub fn load(app: &str) -> Result<(), String> {
+     let (root, bundle) = admitted_bundle(app)?;
+-    let loaded = from_bundle(&bundle)?;
++    let mut loaded = from_bundle(&bundle)?;
++    if app == octosense_daycast_service::APP {
++        // A shell-owned extension for this built-in app. Keep it out of
++        // manifest `agent.tools`: App Hub only admits tools pre-offered to
++        // contained apps, while this declaration is supplied by the host.
++        loaded.tools.push(octosense_daycast_service::agent_tool_declaration());
++    }
+     install(app, loaded, root.join(".host"));
+     Ok(())
+ }
+ 
++/// Daycast's agent can request a schedule write through the same host relay
++/// as every other app tool. The relay obtains live approval before invoking
++/// this executor; all of Daycast's existing host-service tools still use the
++/// ordinary executor.
++struct DaycastExecutor {
++    services: HostServiceExecutor,
++    host_dir: PathBuf,
++}
++
++impl ToolExecutor for DaycastExecutor {
++    fn execute(&self, call: HostToolCall, reply: ToolReply) {
++        if call.name == octosense_daycast_service::AGENT_ADD_TOOL {
++            if !reply.is_open() { return; }
++            let result = octosense_daycast_service::handle(
++                octosense_daycast_service::APP,
++                "daycast.schedule.add",
++                &call.args,
++                &self.host_dir,
++            );
++            reply.finish(match result {
++                Ok(value) => ToolOutcome::Ok(value),
++                Err(error) => ToolOutcome::error("daycast_schedule", error),
++            });
++        } else {
++            self.services.execute(call, reply);
++        }
++    }
++
++    fn cancel(&self, call_id: &str) {
++        self.services.cancel(call_id);
++    }
++}
++
+ /// `app`'s admitted bundle: a system app's packed bundle, or an installed
+ /// one, with App Hub's apps root.
+ fn admitted_bundle(app: &str) -> Result<(PathBuf, PathBuf), String> {
+diff --git a/crates/shell/src/system_chat/mod.rs b/crates/shell/src/system_chat/mod.rs
+index ecc4dc10..89a8e0b8 100644
+--- a/crates/shell/src/system_chat/mod.rs
++++ b/crates/shell/src/system_chat/mod.rs
+@@ -584,8 +584,15 @@ pub fn approval_request(ask: &model::ApprovalAsk) -> (String, crate::approvals::
+     // Command execution (`terminal.run`, the host tool Setup's switch grants
+     // the system agent) is a command: `auto_approvable: false`, no standing
+     // rule answers it, developer mode may (ADR 0004 §12, §13).
+-    let tool = if ask.tool == grants::COMMAND_TOOL { ToolSpec::host(&ask.tool).command() } else { ToolSpec::host(&ask.tool) };
+-    let app = if ask.tool == grants::COMMAND_TOOL { grants::COMMAND_APP } else { ask.app.as_deref().unwrap_or(APP) }.to_string();
++    let (tool, app) = if ask.tool == grants::COMMAND_TOOL {
++        (ToolSpec::host(&ask.tool).command(), grants::COMMAND_APP.to_string())
++    } else if ask.tool == crate::agents::DAYCAST_ADD_TOOL {
++        // Every Daycast schedule write needs a live decision; this cannot be
++        // approved by a standing rule, even when called from system chat.
++        (ToolSpec::host(&ask.tool).not_auto_approvable(), "os.weather-assistant".to_string())
++    } else {
++        (ToolSpec::host(&ask.tool), ask.app.as_deref().unwrap_or(APP).to_string())
++    };
+     if ask.external {
+         let context = RequestContext {
+             call_id: format!("{EXTERNAL_PREFIX}{}", ask.approval_id),
+diff --git a/desktop/system-apps.json b/desktop/system-apps.json
+index 200f9ec8..e3ba5a57 100644
+--- a/desktop/system-apps.json
++++ b/desktop/system-apps.json
+@@ -1,6 +1,19 @@
+ {
+   "schema": 1,
+   "source": "../apps",
+-  "apps": ["news", "photos", "maps", "mail", "calendar", "ai-providers", "youtube"],
+-  "assets": {}
++  "apps": [
++    "news",
++    "photos",
++    "maps",
++    "mail",
++    "calendar",
++    "ai-providers",
++    "youtube",
++    "weather-assistant"
++  ],
++  "assets": {
++    "weather-assistant": {
++      "assets": "../apps/weather-assistant/bundle/assets"
++    }
++  }
+ }

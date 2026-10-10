@@ -1,5 +1,15 @@
 # Daycast｜让天气进入今天的安排
 
+## 2026-10-10 UI 改版（源码 0.4.4）
+
+今天、天空、问答、城市管理、城市搜索、我的、衣橱、拍照、照片、日程、天气偏好和家庭提醒页面已统一重做。使用原生文字与 SVG 图标，支持宽窄窗口，并完善逐小时预报、真实日出日落、跨天日程和日期编辑。
+
+[查看全部实际运行截图与验证记录](docs/ui-redesign-2026-10-10/README.md)。下文的历史截图和 0.4.2 发布链接保留作为旧版说明；本次提交没有创建新 Release。
+
+本版完整功能使用已验证的定制 OctoSense 宿主：问答与建议调用 `model.complete`，日程使用 `storage.daycast.schedule.*`，家庭页使用 `storage.daycast.rinx.*`。普通宿主只加载 bundle 不能提供新增的日程与 Rinx 服务。配套代码、补丁和接入说明见 [host-integration](host-integration/README.md)；与最新 OctoSense 主分支的适配未验证。
+
+家庭天气变化检查只在应用打开期间运行。Rinx 提醒默认关闭，发送须经 Rinx 确认；真实账号发送未验证。当前 Windows 运行时不支持相机源，也未提供从磁盘选择照片的入口。衣物照片只在本机保存，独立测试中使用本地示例图验证了照片页。
+
 ## 视频介绍
 
 **[观看或下载 Daycast-Onway-promo-remix（2 分 40 秒）](https://github.com/buqizixv/shaotangjiabing/releases/download/v0.4.3/Daycast-Onway-promo-remix.mp4)**

@@ -1,0 +1,26 @@
+{
+  "app_id": "weather-assistant",
+  "version": "0.4.4",
+  "bundle_bytes": 6305117,
+  "bundle_blake3": "f891301a0cb2f9619788dace3f5aefaac1112bd7333ffdb77ee32e41c69146bf",
+  "main_sha256": "2076ef663617897568bbeb2e4158f647c54377c8521eccabb324197effefb73c",
+  "source_matches_native_verified_bundle": true,
+  "hub_check": "passed --allow-unsigned; publisher unsigned",
+  "regression_tests": {
+    "passed": 19,
+    "failed": 0,
+    "bundle": "submitted source, manifest and digest"
+  },
+  "subset_font_native_smoke": {
+    "app_id": "weather-assistant",
+    "routes": [
+      "today",
+      "sky",
+      "qa",
+      "mine"
+    ],
+    "hidden_window": true,
+    "isolated_data": true,
+    "photo_camera_real_model_rinx_send": "not exercised"
+  }
+}

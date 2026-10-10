@@ -11,7 +11,7 @@
 | 应用 | 解决的问题 | 当前交付 | 入口 |
 | --- | --- | --- | --- |
 | **在途 Onway** | 什么时候出发、怎样到站、在哪里下车，以及如何结束和记录一次行程 | v1.0.2 Windows 即用包、源码与视频 | [项目说明](onway/README.md) · [下载演示包](https://github.com/buqizixv/shaotangjiabing/releases/tag/onway-v1.0.2) |
-| **Daycast** | 天气对穿衣、活动和日程有什么影响，如何结合个人资料做安排 | v0.4.2 OctoSense 应用包 | [项目说明](octoscript-weather-assistant/README.md) · [下载应用包](https://github.com/buqizixv/shaotangjiabing/releases/tag/v0.4.2) |
+| **Daycast** | 天气对穿衣、活动和日程有什么影响，如何结合个人资料做安排 | v0.4.4 UI 改版源码；v0.4.2 已发布应用包 | [项目说明](octoscript-weather-assistant/README.md) · [全页面实际截图](octoscript-weather-assistant/docs/ui-redesign-2026-10-10/README.md) · [下载应用包](https://github.com/buqizixv/shaotangjiabing/releases/tag/v0.4.2) |
 
 ## 在途 Onway：从准备出发到到达
 
@@ -40,6 +40,8 @@
 [App Hub 人工审核申请 #102](https://github.com/OctoSense-org/OctoSense-App-Hub/issues/102) 已提交，正在请求确认宿主接入方式；**提交不等于上架或标准宿主适配完成**。详见 [接入说明](onway/docs/AppHub提交说明.md) 与 [检查、自检材料](onway/docs/apphub-review/)。
 
 ## Daycast：让天气进入今天的安排
+
+2026-10-10 的全页面 UI 改版源码已提交：查看[原生运行截图与验证记录](octoscript-weather-assistant/docs/ui-redesign-2026-10-10/README.md)及[配套宿主接入说明](octoscript-weather-assistant/host-integration/README.md)。该源码与下方旧版 Release 分开，完整日程和 Rinx 功能需要配套宿主。
 
 **[观看 Daycast 视频介绍 · Daycast-Onway-promo-remix（2 分 40 秒）](https://github.com/buqizixv/shaotangjiabing/releases/download/v0.4.3/Daycast-Onway-promo-remix.mp4)**
 
