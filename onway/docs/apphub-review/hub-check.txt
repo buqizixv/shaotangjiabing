@@ -1,3 +1,0 @@
-onway 1.0.2 — PASSED
-  [warning] publisher-signature: unsigned: accountability rests on the hub alone
-  grants: capabilities {"glance", "location", "storage"}, hosts {}, storage 16777216 bytes, agent none
