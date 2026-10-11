@@ -19,13 +19,12 @@
   ],
   "id": "weather-assistant",
   "integrity": {
-    "bundle_blake3": "a1da2688267268db0bf01e5541936bcd790ffc3aee353dcfdf7df423818ec2e4"
+    "bundle_blake3": "9ac4f265f48e8bc825e8d8c2edb5f0253c76963f55f315d8376c9c27f10e4806"
   },
   "name": "Daycast",
   "network": {
     "hosts": [
-      "api.open-meteo.com",
-      "geocoding-api.open-meteo.com"
+      "api.open-meteo.com"
     ]
   },
   "schema": 1,

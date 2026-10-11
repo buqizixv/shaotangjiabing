@@ -9,6 +9,8 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+mod qweather;
+
 pub const APP: &str = "os.weather-assistant";
 pub const AGENT_ADD_TOOL: &str = "daycast.schedule.add";
 const EVENTS_MAX: usize = 500;
@@ -168,6 +170,13 @@ impl HostService for DaycastService {
     }
 
     fn call(&mut self, call: ServiceCall, reply: Replier, _host: &mut dyn ServiceHost) {
+        if call.method() == "daycast.places.search" {
+            // Secrets and network I/O stay in the host, off the UI thread.
+            std::thread::spawn(move || {
+                reply.send(qweather::search(&call.app_id, &call.args));
+            });
+            return;
+        }
         if call.method().starts_with("daycast.rinx.") {
             match RINX_BRIDGE.get() {
                 Some(bridge) => bridge(call, reply),

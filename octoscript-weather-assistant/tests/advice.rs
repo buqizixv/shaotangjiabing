@@ -58,6 +58,59 @@ fn complete_weather_page_parses() {
 }
 
 #[test]
+fn places_search_queries_the_host_even_for_a_previously_local_city() {
+    let result = run(r#"
+        page = "search"
+        ui.city_query = {text: fn(){"太原市"}}
+        search_cities()
+        pending[0].callback({is_ok: true data: {results: [
+            {name: "太原" admin1: "山西省" admin2: "太原" country: "中国" latitude: 37.87 longitude: 112.55}
+            {name: "迎泽" admin1: "山西省" admin2: "太原" country: "中国" latitude: 37.86 longitude: 112.56}
+        ] warning: ""}})
+        {request: pending[0].method args: pending[0].args count: city_results.len() status: search_status}.to_json()
+    "#);
+    assert_eq!(result["request"], "storage.daycast.places.search");
+    assert_eq!(result["args"], json!({"query":"太原市","scenic":true}));
+    assert_eq!(result["count"], 2);
+    assert!(result["status"].as_str().unwrap().contains("和风天气"));
+}
+
+#[test]
+fn old_place_searches_cannot_overwrite_new_results_or_empty_input() {
+    let result = run(r#"
+        page = "search"
+        let entered = "北京"
+        ui.city_query = {text: fn(){entered}}
+        search_cities()
+        entered = "榆次区"
+        search_cities()
+        pending[1].callback({is_ok: true data: {results: [{name:"榆次"}] warning:""}})
+        pending[0].callback({is_ok: true data: {results: [{name:"北京"}] warning:""}})
+        let latest = city_results[0].name
+        entered = ""
+        search_cities()
+        pending[1].callback({is_ok: true data: {results: [{name:"榆次"}] warning:""}})
+        {latest:latest count:city_results.len() requests:pending.len()}.to_json()
+    "#);
+    assert_eq!(result["latest"], "榆次");
+    assert_eq!(result["count"], 0);
+    assert_eq!(result["requests"], 2);
+}
+
+#[test]
+fn family_city_lookup_uses_city_results_and_stages_confirmation() {
+    let result = run(r#"
+        qa_generation = 7
+        stage_ai_action("add_family_city", "榆次区", "", 7, "add_family_city")
+        pending[0].callback({is_ok:true data:{results:[{name:"榆次" admin1:"山西省" country:"中国" latitude:37.68 longitude:112.75}]}})
+        {request:pending[0].args draft:pending_action saved:family_cities.len()}.to_json()
+    "#);
+    assert_eq!(result["request"], json!({"query":"榆次区","scenic":false}));
+    assert_eq!(result["draft"]["city"]["name"], "榆次");
+    assert_eq!(result["saved"], 0);
+}
+
+#[test]
 fn agenda_keeps_indices_and_includes_overnight_events() {
     let result = run(r#"
         current_weather = {current: {time: "2026-10-10T10:30"} daily: {time: ["2026-10-10", "2026-10-11"]}}
