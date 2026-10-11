@@ -316,6 +316,7 @@ fn goto(target){
     ui.navigation.render()
     ui.content.render()
     if target == "schedule" { poll_schedule() }
+    if target == "plan" && !trip_active() {load_trip_profile(); inventory_trip(trip_generation, fn(){if page == "plan" {ui.content.render()}})}
 }
 fn handle_weather_response(response, city){
     if city.latitude != current_city.latitude || city.longitude != current_city.longitude { return }
@@ -1198,14 +1199,36 @@ let trip_reset_review = false
 let trip_started_at = 0
 let trip_history_focus = false
 let trip_event_snapshot = nil
+let trip_evidence = []
+let trip_answers = []
+let trip_assessment = nil
+let trip_question_key = ""
+let trip_inventory = []
+let trip_calendar_checked = false
+let trip_weather = nil
+let trip_profile_style = ""
+let trip_generation_round = 0
+let trip_confirming = false
+let trip_monitor_notice = ""
+let trip_monitor_enabled = false
+let trip_synced_id = ""
+let trip_baseline = nil
+let trip_monitor_review = false
+let trip_monitor_generation = 0
+let trip_monitor_busy = false
+let trip_weather_fetch_ok = false
+let trip_place_candidates = []
+let trip_lookup_city = nil
+let trip_lookup_destination = ""
 
 fn save_trip(){
-    fs.write("travel-plan.json", {version: 1 state: trip_state previous_state: trip_previous_state revision: trip_revision id: trip_id brief: trip_brief memory: trip_memory messages: trip_messages question: trip_question choices: trip_choices draft: trip_draft context: trip_context status: trip_status}.to_json())
+    fs.write("travel-plan.json", {version: 2 lookup_city: trip_lookup_city lookup_destination: trip_lookup_destination place_candidates: trip_place_candidates baseline: trip_baseline evidence: trip_evidence answers: trip_answers assessment: trip_assessment question_key: trip_question_key weather: trip_weather synced_id: trip_synced_id state: trip_state previous_state: trip_previous_state revision: trip_revision id: trip_id brief: trip_brief memory: trip_memory messages: trip_messages question: trip_question choices: trip_choices draft: trip_draft context: trip_context status: trip_status}.to_json())
 }
 fn load_trip(){
+    load_trip_profile()
     if !fs.exists("travel-plan.json") { return }
     let saved = fs.read("travel-plan.json").parse_json()
-    if saved == nil || saved.version != 1 || saved.messages == nil { return }
+    if saved == nil || (saved.version != 1 && saved.version != 2) || saved.messages == nil { return }
     trip_state = saved.state
     trip_previous_state = saved.previous_state
     trip_revision = saved.revision
@@ -1218,6 +1241,9 @@ fn load_trip(){
     trip_draft = saved.draft
     trip_context = saved.context
     trip_status = saved.status
+    if saved.version == 2 {trip_evidence = saved.evidence; trip_answers = saved.answers; trip_assessment = saved.assessment; trip_question_key = saved.question_key; trip_weather = saved.weather; trip_synced_id = saved.synced_id; if saved.to_json().search("\"lookup_city\"") >= 0 {trip_lookup_city = saved.lookup_city; trip_lookup_destination = saved.lookup_destination; trip_place_candidates = saved.place_candidates}; if saved.to_json().search("\"baseline\"") >= 0 {trip_baseline = saved.baseline}}
+    else if trip_state == "ready" {trip_state = "error"; trip_status = "旧版草稿没有经过信息缺口校验。请重新判断后再同步。"}
+    load_trip_profile()
     // Never automatically restart a model call or a calendar write on launch.
     if trip_state == "thinking" { trip_previous_state = "thinking"; trip_state = "paused"; trip_status = "上次规划尚未结束；草稿已保留，由你主动继续。"; save_trip() }
     if trip_state == "syncing" { trip_state = "ready"; trip_status = "上次同步结果待核对。可查看日程，或确认重试；同一版本不会重复添加。"; save_trip() }
@@ -1274,7 +1300,10 @@ fn trip_hourly_forecast(){
     }
     return rows
 }
-fn trip_profile_context(){ return {weather_city: current_city.name forecast_dates: trip_forecast_dates() wardrobe: wardrobe} }
+fn trip_profile_context(){
+    return {weather_city: if trip_weather == nil {""} else {trip_weather.city.name} forecast_dates: if trip_weather == nil {[]} else {trip_weather.data.daily.time} wardrobe: wardrobe readiness_input: trip_readiness_input()}
+}
+
 fn trip_schema(){
     let text = {type: "string" maxLength: 160}
     let step = {type: "object" properties: {title: {type: "string" maxLength: 80} start: {type: "string" maxLength: 16} end: {type: "string" maxLength: 16} location: {type: "string" maxLength: 120} details: {type: "string" maxLength: 600}} required: ["title" "start" "end" "location" "details"] additionalProperties: false}
@@ -1285,15 +1314,18 @@ fn trip_schema(){
         facts: {type: "array" maxItems: 8 items: {type: "object" properties: {label: {type: "string" maxLength: 40} value: text source: {type: "string" enum: ["user" "profile" "default"]}} required: ["label" "value" "source"] additionalProperties: false}}
         assumptions: {type: "array" maxItems: 8 items: {type: "string" maxLength: 240}}
         outfit: {type: "array" maxItems: 6 items: {type: "object" properties: {item: {type: "string" maxLength: 80} reason: {type: "string" maxLength: 200}} required: ["item" "reason"] additionalProperties: false}}
+        daily_outfits: {type: "array" maxItems: 14 items: {type: "object" properties: {date: {type: "string" maxLength: 10} items: {type: "array" maxItems: 8 items: {type: "object" properties: {item: {type: "string" maxLength: 80} reason: {type: "string" maxLength: 200}} required: ["item" "reason"] additionalProperties: false}}} required: ["date" "items"] additionalProperties: false}}
+        packing: {type: "array" maxItems: 30 items: {type: "object" properties: {item: {type: "string" maxLength: 80} quantity: {type: "integer" minimum: 1 maximum: 30} source: {type: "string" enum: ["wardrobe" "prepare"]} reason: {type: "string" maxLength: 200}} required: ["item" "quantity" "source" "reason"] additionalProperties: false}}
         uses_forecast: {type: "boolean"} weather_city: {type: "string" maxLength: 100} weather_summary: {type: "string" maxLength: 400}
         steps: {type: "array" maxItems: 12 items: step}
-        alternatives: {type: "array" maxItems: 6 items: {type: "object" properties: {step_index: {type: "integer" minimum: 0 maximum: 11} condition: text title: {type: "string" maxLength: 80} details: {type: "string" maxLength: 600}} required: ["step_index" "condition" "title" "details"] additionalProperties: false}}
-    } required: ["title" "destination" "date" "party" "transport" "budget_note" "summary" "readiness_reason" "facts" "assumptions" "outfit" "uses_forecast" "weather_city" "weather_summary" "steps" "alternatives"] additionalProperties: false}
-    return {type: "object" properties: {ready: {type: "boolean"} understanding: {type: "string" maxLength: 2400} answer: {type: "string" minLength: 1 maxLength: 900} question: {type: "string" maxLength: 300} choices: {type: "array" maxItems: 4 items: {type: "string" maxLength: 80}} plan: plan} required: ["ready" "understanding" "answer" "question" "choices" "plan"] additionalProperties: false}
+        alternatives: {type: "array" maxItems: 6 items: {type: "object" properties: {rule: {type: "object" properties: {metric: {type: "string" enum: ["rain_probability_percent" "temperature_min_c" "temperature_max_c" "weather_code"]} operator: {type: "string" enum: ["gte" "lte" "eq"]} threshold: {type: "number" minimum: -100 maximum: 100}} required: ["metric" "operator" "threshold"] additionalProperties: false} step_index: {type: "integer" minimum: 0 maximum: 11} condition: text title: {type: "string" maxLength: 80} details: {type: "string" maxLength: 600}} required: ["step_index" "condition" "title" "details" "rule"] additionalProperties: false}}
+    } required: ["title" "destination" "date" "party" "transport" "budget_note" "summary" "readiness_reason" "facts" "assumptions" "outfit" "daily_outfits" "packing" "uses_forecast" "weather_city" "weather_summary" "steps" "alternatives"] additionalProperties: false}
+    return {type: "object" properties: {evidence: {type: "array" maxItems: 12 items: {type: "object" properties: {key: {type: "string" enum: ["destination" "dates" "origin" "party" "style" "sensitivity"]} value: {type: "string" maxLength: 160} quote: {type: "string" maxLength: 300}} required: ["key" "value" "quote"] additionalProperties: false}} ready: {type: "boolean"} understanding: {type: "string" maxLength: 2400} answer: {type: "string" minLength: 1 maxLength: 900} question: {type: "string" maxLength: 300} choices: {type: "array" maxItems: 4 items: {type: "string" maxLength: 80}} plan: plan} required: ["evidence" "ready" "understanding" "answer" "question" "choices" "plan"] additionalProperties: false}
 }
 fn trip_task(){
-    return "你是 Daycast 出行 Plan 规划助手。目标是根据出行需求、真实天气、衣橱、天气偏好和已有日程，安排一份适合本次出行的可执行行程。最新需求在 conversation_history 的最后，initial_brief 保留最初目标。你必须自行判断何时有把握安排好，不设固定问题数，不要为了凑齐问卷持续追问。只要目的地、日期/时间范围和真正影响执行的限制足够明确，且能够给出合理交通缓冲、休息与天气备选，就返回 ready=true 并提供完整 plan；停止提问，question=''、choices=[]。可选的饮食、精确预算等未指定时，可以按合理默认方案安排，但必须写入 assumptions/facts.source='default'，不能说用户已经确认。只有关键信息缺失、相互矛盾或实质影响行程时，ready=false，只问一个必要问题，给0到4个简短选项；answer 说明为什么需要问。不重复已经明确的信息，不询问无关个人信息，不声称正在无限轮次沟通。用户表示结束、暂停或不想继续时不要继续追问；应用提供主动暂停入口。\n日期按 current_local_datetime 的本地年月日解释，不得用天气缓存日期当今天；活动必须用 YYYY-MM-DDTHH:mm，按时间顺序排列，1到12项，不相互重叠，尽量不与 existing_schedule 冲突；时间范围包括往返、合理换乘和休息缓冲。不得修改用户明确时间或已有日程；不确定的交通时间/营业信息写成需核对的假设，不能伪造已查询事实。预算只给上限或估算并注明，不编造精确票价，不承诺订票或预订。\n天气只依据给出的 forecast_location 和 daily/hourly_forecast，匹配目的地和出行日期；没有对应预报时 uses_forecast=false，写明天气尚未核实，仍可用保守安排及可执行备选生成行程。不能把当前城市预报冒充另一目的地的天气。需要具体目的地天气时可请用户通过页面的选择天气地点切换城市，不猜经纬度；有对应预报时 uses_forecast=true、weather_city 必须等于 forecast_location.name，具体时段结论必须对应逐小时数据，缺测不要推断为晴天。极端天气优先取消危险活动或替换为安全的备选，不为了完成计划安排冒险活动。\n穿搭 outfit 仅从 wardrobe 中实际存在的 item 类型选择，写出结合体感偏好的理由；衣橱空时 outfit=[]，可以在 assumptions 提醒需要准备的物品，不声称已拥有。facts.source 分别用 user、profile、default，如实区分用户明确需求、已存偏好与默认安排。plan.readiness_reason 用具体、易理解的依据解释为什么足够生成，不输出没有来源的置信度百分比。plan.alternatives 至少一条，用 step_index 对应从0开始的主行程序号，描述如果出现该天气条件，同一时段替换成什么、在哪里避雨/避热或提前返程，其他后续行程怎样衔接。备选不另行写入重复日程。不要输出任意代码、SVG、HTML、Mermaid，流程图由应用按 steps 与 alternatives 生成。任何 ready 的计划只是待确认的提案，不能声称已经同步或保存到日程；要等用户点击确认。若 ready=false，plan 的字符串设为空，数组为空，uses_forecast=false；不要伪造未完整的成品。validation_feedback 是应用检查发现的问题，修改计划或只询问解决问题的必要信息，不重复旧的错误。"
+    return "你是 Daycast 的置信度驱动出行规划助手。先盘点 input.readiness、目的地天气、实际衣橱、系统日历与历史偏好；绝不通过默认日期、出发地、同行、预算替用户决定后声称有把握。readiness 是应用侧核实后的资料覆盖，不是模型自评分。首先从用户消息提取 evidence，每项 key/value/quote：quote 必须是用户原文的连续片段，value 必须直接出现其中；不得引用自己的回答、旧计划、推测或默认值作为证据。日期格式为 YYYY-MM-DD 至 YYYY-MM-DD；不确定的‘找一个周末’不得选最近周末，不提取日期。已通过选择题确认的资料在 confirmed_answers 和 readiness.known 中，不能丢失或覆盖。用户明确更正优先，有冲突只确认真正缺口。出行中的重检必须保留 previous_plan 已结束步骤的标题与起止时间，只调整尚未完成的部分。readiness 为空或 ready!=true 时，ready=false，只解释已知和待确认内容，不提供成品，不声称信息已经足够；必要时提出一个简短选择题，字符串空、plan 数组空、uses_forecast=false。应用会决定下一条缺口问题并查询目的地预报。不要反复问已知偏好，允许用户随时暂停。\n只有 readiness.ready=true 且限制不冲突、日期范围内能完成往返，才返回 ready=true、question=''、choices=[] 和完整套餐：逐日1到12个活动，YYYY-MM-DDTHH:mm、顺序且不重叠、不与 existing_schedule 冲突；包括交通、休息与缓冲。目的地、日期、同行遵循已核实资料，预算按已确认上限，票价、车次、营业时间没有工具来源必须标为待核对，不能伪造查询或预订。天气只用 destination_forecast 中真实目的地、覆盖日期的 daily/hourly；另一个城市的数据无效。weather_city 为查询返回城市名，按逐日预报区分穿搭。远期或缺测仅在用户明确选择待核实方案后生成，uses_forecast=false，不能说天气已经核实。\n每日 daily_outfits 覆盖所有出行日期，每项 item 必须逐字来自衣橱，空衣橱时每天items=[]，明确尚未登记。packing 列出物品、合理数量、原因，source=wardrobe 只能是衣橱已记录衣物；缺少的雨具、证件等用 source=prepare，不能声称拥有。outfit 是汇总。至少一个 alternatives 天气分支，每项 rule 为 metric（rain_probability_percent/temperature_min_c/temperature_max_c/weather_code）、operator（gte/lte/eq）、threshold（数值），condition 写成同样规则的中文；用明确规则，例如降雨概率>=60%、最低温<=10°C、最高温>=32°C或雷暴天气；step_index 指向替换的主步骤，说明同一时段如何避险与接回后续步骤。不得输出代码或绘图文本，流程图由应用生成。readiness_reason 必须说明已确认哪些关键条件、用了哪些真实资料和还需出发前核对的内容，不输出无依据置信度百分比。任何成品都待用户确认，不能声称已经同步。validation_feedback 必须修正，不重复已被拒绝的安排。"
 }
+
 fn trip_tick(ticket){
     if ticket != trip_generation || trip_state != "thinking" { return }
     if page == "plan" { ui.trip_run_status.set_text(trip_state_label()) }
@@ -1308,88 +1340,48 @@ fn trip_failure(ticket, message){
     if page == "plan" { ui.content.render() }
 }
 fn accept_trip_model(result, ticket, context){
-    if ticket != trip_generation || trip_state != "thinking" { return }
-    if !result.is_ok || result.data == nil || result.data.output == nil { trip_failure(ticket, "AI 暂时不可用。需求和草稿已保留，可以重试或暂停。"); return }
+    if ticket != trip_generation || trip_state != "thinking" {return}
+    if !result.is_ok || result.data == nil || result.data.output == nil {trip_failure(ticket, "AI 暂时不可用，需求已保留。"); return}
     let output = result.data.output
+    if output.to_json().search("\"evidence\"") < 0 {trip_failure(ticket, "AI 未提供资料来源，不能宣称有把握。请重试。"); return}
     trip_memory = output.understanding
-    if output.ready == true {
-        host.request("storage.daycast.plan.validate", {plan: output.plan context: context}, fn(validation){
-            if ticket != trip_generation || trip_state != "thinking" { return }
-            if !validation.is_ok || validation.data == nil || validation.data.plan == nil {
-                trip_failure(ticket, "计划尚未通过时间、衣橱或天气范围检查：" + if validation.error == nil {"宿主暂未提供计划校验服务。"} else {validation.error})
-                return
-            }
-            trip_draft = validation.data.plan
-            trip_context = context
-            trip_revision = trip_revision + 1
-            trip_id = "travel-" + floor(time_now() * 1000) + "-" + trip_revision
-            trip_state = "ready"
-            trip_question = ""
-            trip_choices = []
-            trip_status = "信息足够，已停止提问。完整行程等你确认后才同步。"
-            trip_messages.push({role: "assistant" content: output.answer})
-            trip_keep_messages()
-            save_trip()
-            if page == "plan" { ui.content.render() }
-        })
-    } else {
-        let next_question = output.question.trim()
-        if next_question == "" { trip_failure(ticket, "AI 未给出必要的问题或完整计划；需求已保留，请重试。"); return }
-        if next_question == trip_question && trip_messages.len() > 1 && trip_messages[trip_messages.len() - 1].role == "user" {
-            trip_failure(ticket, "刚才的问题重复了，已停止继续追问。可以补充具体限制后重试。"); return
-        }
-        trip_state = "asking"
-        trip_question = next_question
-        trip_choices = output.choices
-        trip_messages.push({role: "assistant" content: output.answer + "\n" + next_question})
-        trip_keep_messages()
-        trip_status = ""
-        save_trip()
-        if page == "plan" { ui.content.render() }
-    }
+    trip_evidence = output.evidence
+    assess_trip_output(output, ticket, true)
 }
+
 fn call_trip_model(ticket){
-    if ticket != trip_generation || trip_state != "thinking" { return }
+    if ticket != trip_generation || trip_state != "thinking" {return}
     let context = trip_profile_context()
-    let last_draft = trip_draft
-    host.request("model.complete", {task: trip_task() + " understood_constraints 是上次压缩的已知约束；结合最新消息更新 understanding，保留用户明确的目的地、日期、同行、交通、预算上限、饮食/行动限制、已拒绝选项和默认安排，最新明确更正优先；不能把推测写成用户确认。" input: {
-        initial_brief: trip_brief understood_constraints: trip_memory conversation_history: trip_messages previous_plan: last_draft
-        current_local_datetime: trip_local_datetime() forecast_location: current_city
-        current_weather: if current_weather == nil || current_weather.to_json().search("\"current\"") < 0 {nil} else {current_weather.current}
-        daily_forecast: if current_weather == nil || current_weather.to_json().search("\"daily\"") < 0 {nil} else {current_weather.daily}
-        hourly_forecast: trip_hourly_forecast() forecast_dates: context.forecast_dates
-        wardrobe: wardrobe_context() preferences: preferences existing_schedule: schedule_context()
+    host.request("model.complete", {task: trip_task() input: {
+        initial_brief: trip_brief understood_constraints: trip_memory conversation_history: trip_messages previous_plan: trip_draft
+        current_local_datetime: trip_local_datetime() readiness: trip_assessment confirmed_answers: trip_answers
+        destination_forecast: trip_weather forecast_dates: context.forecast_dates
+        wardrobe: wardrobe_context() preferences: preferences historical_style: trip_profile_style existing_schedule: trip_inventory
         validation_feedback: trip_status
-    } schema: trip_schema() class: "strong"}, fn(result){ accept_trip_model(result, ticket, context) })
+    } schema: trip_schema() class: "strong"}, fn(result){accept_trip_model(result, ticket, context)})
 }
+
 fn run_trip_request(){
-    if trip_state == "paused" || trip_state == "syncing" || trip_brief == "" { return }
-    trip_generation = trip_generation + 1
-    let ticket = trip_generation
-    trip_state = "thinking"
-    trip_started_at = time_now()
-    trip_review = false
-    save_trip()
-    ui.content.render()
-    trip_tick(ticket)
-    start_timeout(90.0, || { if ticket == trip_generation && trip_state == "thinking" { trip_generation = trip_generation + 1; trip_state = "error"; trip_status = "本次等待超时，已停止推进。需求已保留，可以重试或暂停。"; save_trip(); if page == "plan" {ui.content.render()} } })
-    // Re-read the shared calendar before planning, then validate again at sync.
-    host.request("storage.daycast.schedule.list", {}, fn(result){
-        if ticket != trip_generation || trip_state != "thinking" { return }
-        if !result.is_ok || result.data == nil || result.data.events == nil { trip_failure(ticket, "暂时无法核对已有日程。请重试，草稿不会自动同步。"); return }
-        schedule = result.data.events
-        call_trip_model(ticket)
-    })
+    if trip_state == "paused" || trip_state == "syncing" || trip_brief == "" {return}
+    trip_generation = trip_generation + 1; let ticket = trip_generation
+    trip_state = "thinking"; trip_started_at = time_now(); trip_generation_round = 0; trip_review = false
+    save_trip(); ui.content.render(); trip_tick(ticket)
+    start_timeout(120.0, || {if ticket == trip_generation && trip_state == "thinking" {trip_generation = trip_generation + 1; trip_state = "error"; trip_status = "盘点或生成超时，进度已保留。可以重试或暂停。"; save_trip(); if page == "plan" {ui.content.render()}}})
+    inventory_trip(ticket, fn(){if trip_confirming {trip_confirming = false; assess_trip_output({ready: false question: "" choices: [] plan: {} answer: "已完成资料盘点，正在生成完整套餐。"}, ticket, true)} else {call_trip_model(ticket)}})
 }
+
 fn send_trip_text(text){
     let message = text.trim()
-    if message == "" || trip_active() || trip_state == "paused" { return }
-    if message.len() > 1200 { trip_status = "请把这条需求控制在 1200 字以内。"; ui.content.render(); return }
-    if trip_brief == "" { trip_brief = message }
-    trip_messages.push({role: "user" content: message})
-    trip_keep_messages()
-    run_trip_request()
+    if message == "暂停" || message == "停止" || message == "先停一下" {pause_trip(); return}
+    if message == "" || trip_active() || trip_state == "paused" {return}
+    if message.len() > 1200 {trip_status = "请把这条需求控制在1200字以内。"; ui.content.render(); return}
+    if trip_brief == "" {trip_brief = message}
+    if trip_state == "asking" && trip_question_key != "" && trip_question_key != "additional" && trip_question_key != "location" {
+        trip_answers.push({key: trip_question_key value: message message_index: trip_messages.len()}); trip_confirming = true
+    }
+    trip_messages.push({role: "user" content: message}); trip_keep_messages(); run_trip_request()
 }
+
 fn send_trip_input(){ let message = ui.trip_input.text(); ui.trip_input.set_text(""); send_trip_text(message) }
 fn pause_trip(){
     if trip_state == "syncing" || trip_state == "synced" || trip_state == "ready" || trip_state == "idle" { return }
@@ -1412,6 +1404,7 @@ fn reset_trip(){
     if trip_state == "syncing" { return }
     trip_generation = trip_generation + 1
     trip_state = "idle"; trip_previous_state = "idle"; trip_id = ""; trip_brief = ""; trip_memory = ""; trip_messages = []; trip_question = ""; trip_choices = []; trip_draft = nil; trip_context = nil; trip_status = ""; trip_review = false; trip_history_focus = false
+    trip_evidence = []; trip_answers = []; trip_assessment = nil; trip_question_key = ""; trip_weather = nil; trip_synced_id = ""; trip_monitor_notice = ""; trip_baseline = nil; trip_monitor_review = false; trip_monitor_enabled = false; trip_monitor_generation = trip_monitor_generation + 1; trip_lookup_city = nil; trip_lookup_destination = ""; trip_place_candidates = []
     save_trip(); ui.content.render()
 }
 fn review_trip(){
@@ -1426,12 +1419,14 @@ fn sync_trip(){
     trip_generation = trip_generation + 1
     let ticket = trip_generation
     save_trip(); ui.content.render()
-    host.request("storage.daycast.plan.sync", {plan_id: trip_id plan: trip_draft context: trip_context confirmed: true}, fn(result){
+    trip_context.readiness_input = trip_readiness_input()
+    host.request("storage.daycast.plan.sync", {plan_id: trip_id replace_plan_id: trip_synced_id plan: trip_draft context: trip_context confirmed: true}, fn(result){
         if ticket != trip_generation || trip_state != "syncing" { return }
         if result.is_ok && result.data != nil && result.data.events != nil {
             schedule = result.data.events
+            trip_synced_id = trip_id
             trip_state = "synced"
-            trip_status = "已加入 " + result.data.count + " 项行程，穿搭、天气备选和流程图一起保存在日程详情中。"
+            trip_status = "已同步到系统日历 " + result.data.count + " 项行程，穿搭、天气备选和流程图一起保存在日程详情中。"
         } else {
             trip_state = "ready"
             trip_status = "同步未完成：" + if result.error == nil {"请先查看日程再重试，同一版本不会重复添加。"} else {result.error}
@@ -1446,6 +1441,191 @@ fn show_trip_from_event(event){
     if event.to_json().search("\"plan_snapshot\"") < 0 || event.plan_snapshot == nil { return }
     trip_event_snapshot = event.plan_snapshot
     goto("plan-details")
+}
+
+
+fn trip_readiness_input(){
+    let weather = {destination: "" dates: [] fetched_at: 0}
+    if trip_weather != nil { weather = {destination: trip_weather.destination daily: trip_weather.data.daily dates: trip_weather.data.daily.time fetched_at: trip_weather.fetched_at} }
+    return {today: trip_local_date() now: time_now() messages: trip_messages answers: trip_answers evidence: trip_evidence preferences: preferences profile_style: trip_profile_style events: trip_inventory calendar_checked: trip_calendar_checked current_city: current_city.name weather: weather}
+}
+fn trip_known(key){
+    if trip_assessment == nil { return "" }
+    for row in trip_assessment.known {if row.key == key {return row.value}}
+    return ""
+}
+fn inventory_trip(ticket, next){
+    host.request("storage.daycast.plan.inventory", {}, fn(result){
+        if ticket != trip_generation {return}
+        if !result.is_ok || result.data == nil {trip_calendar_checked = false; trip_failure(ticket, "无法盘点系统日历，当前进度已保留。请重试。"); return}
+        schedule = result.data.events
+        trip_inventory = []
+        for e in result.data.events {if e.to_json().search("\"plan_id\"") < 0 || e.plan_id != trip_synced_id {trip_inventory.push({title: e.title start: e.start end: e.end})}}
+        for e in result.data.system_events {if trip_synced_id == "" || e.id.search("daycast-" + trip_synced_id + "-") != 0 {trip_inventory.push({title: e.title start: e.start end: if e.end == nil {e.start} else {e.end}})}}
+        trip_calendar_checked = true
+        next()
+    })
+}
+fn ask_trip_gap(assessment){
+    trip_state = "asking"
+    trip_question = assessment.question
+    trip_question_key = assessment.question_key
+    trip_choices = assessment.choices
+    trip_status = "还不能宣称有把握；只确认当前最重要的缺口。"
+    trip_messages.push({role: "assistant" content: assessment.question})
+    trip_keep_messages(); save_trip()
+    if page == "plan" {ui.content.render()}
+}
+fn assess_trip_output(output, ticket, allow_fetch){
+    if ticket != trip_generation || trip_state != "thinking" {return}
+    let context = trip_profile_context()
+    host.request("storage.daycast.plan.assess", context.readiness_input, fn(result){
+        if ticket != trip_generation || trip_state != "thinking" {return}
+        if !result.is_ok || result.data == nil {trip_failure(ticket, "无法核实规划依据，未生成行程。"); return}
+        trip_assessment = result.data
+        let destination = trip_known("destination")
+        if allow_fetch && destination != "" && (trip_weather == nil || trip_weather.destination != destination || time_now() - trip_weather.fetched_at >= 21600) {
+            fetch_trip_weather(destination, ticket, fn(){assess_trip_output(output, ticket, false)})
+            return
+        }
+        if trip_assessment.ready != true {ask_trip_gap(trip_assessment); return}
+        if output.ready != true {
+            if trip_generation_round == 0 {trip_generation_round = 1; call_trip_model(ticket); return}
+            let question = output.question.trim()
+            if question == "" || question == trip_question {trip_failure(ticket, "资料已盘点，但 AI 未能完成可靠计划；可补充要求后重试。"); return}
+            trip_state = "asking"; trip_question_key = "additional"; trip_question = question; trip_choices = output.choices
+            trip_messages.push({role: "assistant" content: output.answer + "\n" + question}); trip_keep_messages(); save_trip(); if page == "plan" {ui.content.render()}; return
+        }
+        let verified_context = trip_profile_context()
+        host.request("storage.daycast.plan.validate", {plan: output.plan context: verified_context replace_plan_id: trip_synced_id}, fn(validation){
+            if ticket != trip_generation || trip_state != "thinking" {return}
+            if !validation.is_ok || validation.data == nil {trip_failure(ticket, "计划未通过完整套餐校验：" + if validation.error == nil {"请重试。"} else {validation.error}); return}
+            trip_draft = validation.data.plan; trip_context = verified_context; trip_baseline = trip_weather
+            trip_revision = trip_revision + 1; trip_id = "travel-" + floor(time_now() * 1000) + "-" + trip_revision
+            trip_state = "ready"; trip_question = ""; trip_question_key = ""; trip_choices = []
+            trip_status = "关键信息已有依据，已生成待确认的套餐；尚未写入日历。"
+            trip_messages.push({role: "assistant" content: output.answer}); trip_keep_messages(); save_trip(); if page == "plan" {ui.content.render()}
+        })
+    })
+}
+fn trip_resolve_city(rows, destination){
+    let matches = []
+    let capitals = []
+    for city in rows {
+        if city.name == destination {
+            matches.push(city)
+            if city.to_json().search("\"feature_code\"") >= 0 && city.feature_code == "PPLC" {capitals.push(city)}
+        }
+    }
+    if matches.len() == 1 {return matches[0]}
+    if capitals.len() == 1 {return capitals[0]}
+    if matches.len() == 0 && rows.len() == 1 {return rows[0]}
+    return nil
+}
+fn confirm_trip_place(city){
+    if trip_state != "asking" || trip_question_key != "location" {return}
+    trip_lookup_city = city; trip_lookup_destination = trip_known("destination")
+    trip_place_candidates = []; trip_confirming = true
+    trip_messages.push({role: "user" content: "目的地定位确认：" + location_text(city)})
+    trip_keep_messages(); run_trip_request()
+}
+
+fn fetch_trip_weather(destination, ticket, next){
+    if ticket != trip_generation {return}
+    trip_status = "正在查询 " + destination + " 的天气，首页城市不会代替目的地。"
+    if page == "plan" {ui.content.render()}
+    let matched = nil
+    if current_city.name == destination {matched = current_city}
+    for city in cities {if city.name == destination {matched = city}}
+    if trip_lookup_city != nil && trip_lookup_destination == destination {matched = trip_lookup_city}
+    if matched != nil {fetch_trip_forecast(matched, destination, ticket, next); return}
+    let url = "https://geocoding-api.open-meteo.com/v1/search?name=" + destination.url_encode() + "&count=5&language=zh&format=json"
+    net.http_request(net.HttpRequest{url: url method: net.HttpMethod.GET}) do net.HttpEvents{
+        on_response: |response| {
+            if ticket != trip_generation {return}
+            let data = response.body.to_string().parse_json()
+            if response.status_code >= 400 || data == nil || data.to_json().search("\"results\"") < 0 || data.results == nil || data.results.len() == 0 {trip_status = "目的地定位未成功，天气尚待核实。"; next(); return}
+            let exact = trip_resolve_city(data.results, destination)
+            if exact == nil {
+                trip_place_candidates = data.results
+                trip_state = "asking"; trip_question_key = "location"; trip_question = "发现多个同名地点，请确认这次出行的准确区域。"; trip_choices = []
+                trip_status = "目的地定位尚未确认，不会把同名地区的天气混用。"
+                save_trip(); if page == "plan" {ui.content.render()}; return
+            }
+            fetch_trip_forecast(exact, destination, ticket, next)
+        }
+        on_error: |_error| {if ticket == trip_generation {trip_status = "目的地天气查询失败，不能当作晴天。"; next()}}
+    }
+}
+fn fetch_trip_forecast(city, destination, ticket, next){
+    trip_weather_fetch_ok = false
+    let url = "https://api.open-meteo.com/v1/forecast?latitude=" + city.latitude + "&longitude=" + city.longitude + "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,uv_index_max&hourly=temperature_2m,precipitation_probability,weather_code&current=temperature_2m,apparent_temperature,precipitation,weather_code&timezone=auto&forecast_days=16&past_days=" + if trip_known("dates") != "" && trip_known("dates").split(" 至 ")[0] < trip_local_date() {14} else {0}
+    net.http_request(net.HttpRequest{url: url method: net.HttpMethod.GET}) do net.HttpEvents{
+        on_response: |response| {
+            if ticket != trip_generation {return}
+            let data = response.body.to_string().parse_json()
+            if response.status_code >= 400 || data == nil || data.to_json().search("\"daily\"") < 0 || data.daily == nil || data.daily.to_json().search("\"time\"") < 0 {trip_status = "目的地预报不可用，保留缺口。"; next(); return}
+            trip_weather = {destination: destination city: city fetched_at: time_now() data: data}; trip_weather_fetch_ok = true
+            save_trip(); next()
+        }
+        on_error: |_error| {if ticket == trip_generation {trip_status = "目的地天气服务暂不可用。"; next()}}
+    }
+}
+fn save_trip_profile(style){
+    trip_profile_style = style
+    fs.write("trip-profile.json", {style: style updated_at: trip_local_datetime()}.to_json())
+    trip_status = "反馈已保存为节奏与预算偏好；日期和同行仍按每次出行确认。"
+    save_trip(); ui.content.render()
+}
+fn load_trip_profile(){
+    if !fs.exists("trip-profile.json") {return}
+    let saved = fs.read("trip-profile.json").parse_json()
+    if saved != nil && saved.to_json().search("\"style\"") >= 0 {trip_profile_style = saved.style}
+}
+
+
+fn check_trip_weather(){
+    if trip_draft == nil || trip_active() || trip_state == "paused" || (trip_state != "ready" && trip_state != "synced") {return}
+    if trip_monitor_busy {return}
+    let ticket = trip_generation
+    if trip_weather == nil {trip_monitor_notice = "目的地天气仍未核实，请补充资料后重新判断。"; ui.content.render(); return}
+    trip_monitor_busy = true
+    start_timeout(45.0, || {trip_monitor_busy = false})
+    let baseline = if trip_baseline == nil {trip_weather} else {trip_baseline}
+    trip_monitor_notice = "正在重新查询目的地天气…"
+    ui.content.render()
+    fetch_trip_forecast(trip_weather.city, trip_weather.destination, ticket, fn(){
+        if ticket != trip_generation {return}
+        trip_monitor_busy = false
+        if !trip_weather_fetch_ok || trip_weather.fetched_at <= baseline.fetched_at {trip_monitor_notice = "天气重检未取得更新数据，请稍后重试。"; ui.content.render(); return}
+        host.request("storage.daycast.plan.recheck", {plan: trip_draft baseline: baseline current: trip_weather}, fn(result){
+            if ticket != trip_generation {return}
+            if !result.is_ok || result.data == nil {trip_monitor_notice = "暂时无法完成天气重检，现有行程未改动。"; ui.content.render(); return}
+            if result.data.needs_review {
+                trip_monitor_notice = "天气条件改变，建议重检方案；日历尚未改动。"
+                for change in result.data.changes {trip_monitor_notice = trip_monitor_notice + "\n" + change.date + " · " + change.step + "：" + change.condition + " → " + change.alternative}
+                trip_monitor_review = true
+            } else {trip_monitor_notice = "已核对最新天气，现有天气分支没有发生变化。"; trip_monitor_review = false}
+            save_trip(); if page == "plan" {ui.content.render()}
+        })
+    })
+}
+fn trip_monitor_tick(ticket){
+    if ticket != trip_monitor_generation || !trip_monitor_enabled {return}
+    if trip_draft != nil && trip_draft.steps.len() > 0 && trip_draft.steps[trip_draft.steps.len()-1].end < trip_local_datetime() {trip_monitor_enabled = false; trip_monitor_notice = "这次出行已结束，天气监测已停止。"; if page == "plan" {ui.content.render()}; return}
+    check_trip_weather()
+    start_timeout(1800.0, || trip_monitor_tick(ticket))
+}
+fn toggle_trip_monitor(){
+    trip_monitor_enabled = !trip_monitor_enabled
+    trip_monitor_generation = trip_monitor_generation + 1
+    if trip_monitor_enabled {trip_monitor_tick(trip_monitor_generation)}
+    ui.content.render()
+}
+fn review_weather_changes(){
+    if !trip_monitor_review {return}
+    trip_monitor_review = false
+    send_trip_text("根据最新目的地天气重检原行程，保留已确认的日期、同行、预算和限制，生成待确认的替代版本。原日历先保留，等我确认后再替换。")
 }
 
 let ink = #x253445
@@ -1800,7 +1980,8 @@ if page == "plan" {
                     if trip_review && trip_state == "ready" {
                         Card{draw_bg.color: soft
                             Heading{text: "把这次出行，放进日程。"}
-                            Small{text: "请检查以下时间。穿搭、天气备选和完整流程图会作为日程详情一起保存。"}
+                            Small{text: "请检查以下时间。确认后写入系统日历，Daycast 同时保留完整穿搭、打包清单与天气流程图。"}
+                            if trip_synced_id != "" {Small{text: "确认后替换这份出行计划的旧版本，其余日程保留。" draw_text.color: orange}}
                             for step in trip_draft.steps {Small{text: step.start + " 至 " + step.end + "\n" + step.title draw_text.color: ink}}
                             Caption{text: "同步前会重新检查已有日程；存在冲突则整份计划都不写入。"}
                             Primary{text: "确认加入 " + trip_draft.steps.len() + " 项日程" width: Fill on_click: || sync_trip()}
@@ -1810,9 +1991,8 @@ if page == "plan" {
         Card{draw_bg.color: warm padding: 20
             View{width: Fill height: Fit flow: if wide_layout {Flow.Right} else {Flow.Down} spacing: 18
                 View{width: Fill height: Fit flow: Down spacing: 5
-                    Heading{text: "所选天气地点 · " + current_city.name draw_text.text_style.font_size: 14}
-                    Caption{text: trip_forecast_label()}
-                    Quiet{text: "选择天气地点 ›" on_click: || goto("cities")}
+                    Heading{text: "目的地天气 · " + if trip_weather == nil {"等待识别"} else {trip_weather.destination} draw_text.text_style.font_size: 14}
+                    Caption{text: if trip_weather == nil {"识别目的地后自动查询，不使用首页城市代替。"} else {"预报范围：" + trip_weather.data.daily.time[0] + " 至 " + trip_weather.data.daily.time[trip_weather.data.daily.time.len()-1]}}
                 }
                 View{width: Fill height: Fit flow: Down spacing: 7
                     Heading{text: "带上你的衣橱" draw_text.text_style.font_size: 14}
@@ -1837,6 +2017,24 @@ if page == "plan" {
                         Small{text: "说说出行日期、目的地、同行的人和你在意的事。已提供的信息不会反复询问。"}
                         Caption{text: "例如：明天和朋友去公园，上午出发，傍晚前回来，公交出行，希望轻松一些。"}
                     }
+                    if trip_state == "asking" {
+                        Card{draw_bg.color: soft padding: 18
+                            Caption{text: "只确认影响本次行程的信息" draw_text.color: orange}
+                            Heading{text: trip_question draw_text.text_style.font_size: 17}
+                            for choice in trip_choices {Action{text: choice width: Fill height: Fit padding: 12 on_click: || send_trip_text(choice)}}
+                            if trip_question_key == "location" {for city in trip_place_candidates {Action{text: location_text(city) width: Fill height: Fit padding: 12 on_click: || confirm_trip_place(city)}}}
+                            Caption{text: "也可以在下面用自己的话回答。回答后由 AI 再判断是否已足够生成。"}
+                        }
+                    }
+                    if trip_state == "paused" {
+                        Card{draw_bg.color: pale padding: 22
+                            Heading{text: "你已暂停这次规划。" draw_text.text_style.font_size: 19}
+                            Small{text: "当前需求和草稿已保留。不再继续提问或生成，等你主动继续。"}
+                            if trip_question != "" {Caption{text: "继续后，从这里接上：" + trip_question}}
+                            Primary{text: "继续规划 →" on_click: || resume_trip()}
+                        }
+                    }
+                    if trip_messages.len() > 0 {Caption{text: "最近的对话"}}
                     if trip_messages.len() > 4 {
                         Quiet{text: if trip_history_focus {"收起较早对话"} else {"查看较早对话 · " + (trip_messages.len() - 4) + " 条"} on_click: || {trip_history_focus = !trip_history_focus; ui.content.render()}}
                         if trip_history_focus {ScrollYView{width: Fill height: 210 flow: Down spacing: 9
@@ -1858,25 +2056,9 @@ if page == "plan" {
                             Caption{text: "你可以暂停，需求与草稿会保留。"}
                         }
                     }
-                    if trip_state == "asking" {
-                        Card{draw_bg.color: soft padding: 18
-                            Caption{text: "只确认影响本次行程的信息" draw_text.color: orange}
-                            Heading{text: trip_question draw_text.text_style.font_size: 17}
-                            for choice in trip_choices {Action{text: choice width: Fill height: Fit padding: 12 on_click: || send_trip_text(choice)}}
-                            Caption{text: "也可以在下面用自己的话回答。回答后由 AI 再判断是否已足够生成。"}
-                        }
-                    }
-                    if trip_state == "paused" {
-                        Card{draw_bg.color: pale padding: 22
-                            Heading{text: "你已暂停这次规划。" draw_text.text_style.font_size: 19}
-                            Small{text: "当前需求和草稿已保留。不再继续提问或生成，等你主动继续。"}
-                            if trip_question != "" {Caption{text: "继续后，从这里接上：" + trip_question}}
-                            Primary{text: "继续规划 →" on_click: || resume_trip()}
-                        }
-                    }
                     if trip_state == "ready" || trip_state == "synced" {
                         Card{draw_bg.color: sage padding: 18
-                            Heading{text: "停止提问，行程已生成。" draw_text.text_style.font_size: 16}
+                            Heading{text: "关键选择已确认，套餐已生成。" draw_text.text_style.font_size: 16}
                             Small{text: if trip_draft == nil {"完整行程已保留。"} else {trip_draft.readiness_reason} draw_text.color: ink}
                             Caption{text: "可选细节按标明的默认安排处理，你随时可以补充修改。"}
                         }
@@ -1894,6 +2076,16 @@ if page == "plan" {
                 }
             }
             View{width: Fill{weight: 135 basis: 430 shrink: 1 min: if wide_layout {360} else {0}} height: Fit flow: Down spacing: 18
+                    if trip_assessment != nil {
+                        Card{draw_bg.color: pale padding: 15 spacing: 7
+                            Heading{text: "资料盘点与信息缺口" draw_text.text_style.font_size: 15}
+                            for row in trip_assessment.known {Caption{text: "✓ " + row.label + "：" + row.value + if row.source == "profile" {" · 历史偏好"} else {" · 你已提供"}}}
+                            for row in trip_assessment.missing {Caption{text: "待确认 · " + row.label draw_text.color: orange}}
+                            Caption{text: "天气：" + trip_assessment.weather}
+                            Caption{text: "日历：" + trip_assessment.calendar}
+                            Caption{text: "衣橱：" + wardrobe.len() + " 件实物记录"}
+                        }
+                    }
                 if trip_draft == nil {
                     Card{spacing: 17
                         Heading{text: if trip_state == "paused" {"当前草稿，已为你保留"} else {"正在拼好这次出行"}}
@@ -1942,12 +2134,31 @@ if page == "plan" {
                                 }
                             }
                         }
+                        if plan.to_json().search("\"daily_outfits\"") >= 0 {
+                            Hr{} Heading{text: "每天，穿自己的衣物" draw_text.text_style.font_size: 16}
+                            for day in plan.daily_outfits {
+                                Caption{text: day.date draw_text.color: orange}
+                                if day.items.len() == 0 {Caption{text: "衣橱暂无匹配实物；需补充记录。"}}
+                                for item in day.items {Small{text: item.item + " · " + item.reason}}
+                            }
+                            Hr{} Heading{text: "出发前，照着打包" draw_text.text_style.font_size: 16}
+                            for item in plan.packing {Small{text: item.item + " × " + item.quantity + " · " + if item.source == "wardrobe" {"衣橱已有"} else {"需要准备"}}; Caption{text: item.reason}}
+                        }
                         if plan.assumptions.len() > 0 {
                             Hr{} Heading{text: "默认安排，随时可改" draw_text.text_style.font_size: 14}
                             for assumption in plan.assumptions {Caption{text: "· " + assumption}}
                         }
                     }
                     Card{spacing: 11
+                        if trip_state == "ready" || trip_state == "synced" {
+                            Heading{text: "天气变化，及时重检" draw_text.text_style.font_size: 16}
+                            Caption{text: "应用运行期间每30分钟核对一次；关闭应用后暂停监测。"}
+                            Action{text: if trip_monitor_enabled {"关闭天气监测"} else {"开启天气监测"} width: Fill on_click: || toggle_trip_monitor()}
+                            Quiet{text: "现在重新核对天气" width: Fill on_click: || check_trip_weather()}
+                            if trip_monitor_notice != "" {Small{text: trip_monitor_notice draw_text.color: orange}}
+                            if trip_monitor_review {Primary{text: "重检并生成待确认方案" width: Fill on_click: || review_weather_changes()}}
+                            Hr{}
+                        }
                         Heading{text: "行程流程图" draw_text.text_style.font_size: 17}
                         Caption{text: "主路线与天气备选，按实际时段衔接。"}
                         for i in plan.steps.len() {
@@ -1977,10 +2188,17 @@ if page == "plan" {
                         Hr{}
                         Caption{text: "备选作为计划附件保存，不另占重复日程。"}
                         if trip_state == "ready" {
-                            Primary{text: "检查并同步日程 →" width: Fill on_click: || review_trip()}
+                            Primary{text: "检查并同步系统日历 →" width: Fill on_click: || review_trip()}
                             Caption{text: "确认后，一次加入 " + plan.steps.len() + " 项安排。"}
                         }
                         if trip_state == "synced" {Action{text: "查看已保存日程 ›" width: Fill on_click: || {selected_schedule_date = plan.date; goto("schedule")}}}
+                        if trip_state == "synced" {
+                            Hr{} Heading{text: "这次出行的反馈" draw_text.text_style.font_size: 15}
+                            Caption{text: "只在你确认后记住节奏与预算，下次减少重复问题。"}
+                            Action{text: "这个节奏适合我，记为偏好" width: Fill on_click: || save_trip_profile(trip_known("style"))}
+                            Action{text: "下次更轻松，降低步行强度" width: Fill on_click: || save_trip_profile("轻松慢游，减少步行；预算沿用：" + trip_known("style"))}
+                        }
+
                         if trip_state == "syncing" {Small{text: "正在保存完整行程，请等待同步结果。" draw_text.color: orange}}
                     }
 
@@ -2002,6 +2220,10 @@ if page == "plan-details" && trip_event_snapshot != nil {
             Heading{text: plan.title draw_text.text_style.font_size: 24}
             Small{text: plan.destination + " · " + plan.date + " · " + plan.party}
             Small{text: plan.summary draw_text.color: ink}
+            if plan.to_json().search("\"daily_outfits\"") >= 0 {
+                for day in plan.daily_outfits {Caption{text: day.date}; for item in day.items {Small{text: item.item + " · " + item.reason}}}
+                for item in plan.packing {Small{text: "打包：" + item.item + " × " + item.quantity + " · " + if item.source == "wardrobe" {"衣橱已有"} else {"需要准备"}}}
+            }
             Caption{text: "这是同步时保存的计划，天气说明以当时提供的数据为准。出发前请重新核对。"}
             Hr{} Heading{text: "天气与穿搭" draw_text.text_style.font_size: 16}
             Small{text: plan.weather_summary}

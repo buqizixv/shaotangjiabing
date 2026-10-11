@@ -9,7 +9,11 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+mod qweather;
+
 mod plans;
+mod confidence;
+mod monitor;
 
 pub const APP: &str = "os.weather-assistant";
 pub const AGENT_ADD_TOOL: &str = "daycast.schedule.add";
@@ -100,6 +104,12 @@ pub fn handle(app: &str, method: &str, args: &Value, host_dir: &Path) -> Result<
     let _guard = STORE.lock().unwrap_or_else(|error| error.into_inner());
     let mut events = load(host_dir)?;
     match method {
+        "daycast.plan.assess" => confidence::assess(args),
+        "daycast.plan.recheck" => monitor::recheck(args),
+        "daycast.plan.inventory" => {
+            let system_events = octosense_calendar_service::travel::events(host_dir)?;
+            Ok(json!({"events":events,"system_events":system_events,"calendar_checked":true}))
+        }
         "daycast.plan.validate" => plans::validate_reply(args, &events),
         "daycast.plan.sync" => plans::sync(args, &mut events, host_dir),
         "daycast.schedule.list" => {
@@ -168,6 +178,13 @@ impl HostService for DaycastService {
     }
 
     fn call(&mut self, call: ServiceCall, reply: Replier, _host: &mut dyn ServiceHost) {
+        if call.method() == "daycast.places.search" {
+            // Secrets and network I/O stay in the host, off the UI thread.
+            std::thread::spawn(move || {
+                reply.send(qweather::search(&call.app_id, &call.args));
+            });
+            return;
+        }
         if call.method().starts_with("daycast.rinx.") {
             match RINX_BRIDGE.get() {
                 Some(bridge) => bridge(call, reply),

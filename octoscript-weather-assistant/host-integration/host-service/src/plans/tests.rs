@@ -12,7 +12,7 @@ impl Store {
 }
 impl Drop for Store { fn drop(&mut self) { let _=std::fs::remove_dir_all(&self.0); } }
 fn fixture() -> Value {
-    json!({"plan_id":"travel-test-v1","confirmed":true,"context":{"weather_city":"杭州","forecast_dates":["2030-01-01"],"wardrobe":["外套"]},"plan":{
+    let mut args=json!({"plan_id":"travel-test-v1","confirmed":true,"context":{"weather_city":"杭州","forecast_dates":["2030-01-01"],"wardrobe":["外套"]},"plan":{
         "title":"西湖慢游","destination":"杭州 · 西湖","date":"2030-01-01","party":"2人","transport":"公交","budget_note":"300元上限",
         "summary":"上午户外，午后休息。","readiness_reason":"日期、时间、交通和雨天方式已明确。",
         "facts":[{"label":"预算","value":"300元","source":"user"}],"assumptions":["午餐按常规安排，可修改。"],
@@ -20,7 +20,15 @@ fn fixture() -> Value {
         "steps":[{"title":"散步","start":"2030-01-01T10:00","end":"2030-01-01T11:00","location":"西湖","details":"分段休息。"},
                  {"title":"返程","start":"2030-01-01T12:00","end":"2030-01-01T13:00","location":"公交","details":"预留缓冲。"}],
         "alternatives":[{"step_index":0,"condition":"降雨","title":"室内休息","details":"同一时段转室内，之后按原计划返程。"}]
-    }})
+    }});
+    args["context"]["readiness_input"]=json!({"today":"2026-10-11","now":chrono::Local::now().timestamp(),"messages":[],"evidence":[],"answers":[
+        {"key":"destination","value":"杭州"},{"key":"dates","value":"2030-01-01 至 2030-01-01"},
+        {"key":"origin","value":"上海"},{"key":"party","value":"2人"},{"key":"style","value":"轻松，300元"}],
+        "preferences":["怕冷"],"events":[],"calendar_checked":true,"weather":{"destination":"杭州","fetched_at":chrono::Local::now().timestamp(),"dates":["2030-01-01"],"daily":{"time":["2030-01-01"],"temperature_2m_min":[10],"temperature_2m_max":[20],"precipitation_probability_max":[65],"weather_code":[61]}}});
+    args["plan"]["alternatives"][0]["rule"]=json!({"metric":"rain_probability_percent","operator":"gte","threshold":60});
+    args["plan"]["daily_outfits"]=json!([{"date":"2030-01-01","items":[{"item":"外套","reason":"怕冷"}]}]);
+    args["plan"]["packing"]=json!([{"item":"外套","quantity":1,"source":"wardrobe","reason":"应对温差"},{"item":"雨伞","quantity":1,"source":"prepare","reason":"雨天备用"}]);
+    args
 }
 #[test]
 fn batches_only_write_after_confirmation_and_retry_is_idempotent() {
@@ -97,4 +105,43 @@ fn legacy_events_keep_working_and_plan_notes_survive_later_event_writes() {
     handle(crate::APP,"daycast.schedule.add",&json!({"title":"新日程","start":"2030-01-02T08:00","end":"2030-01-02T09:00"}),&store.0).unwrap();
     let stored=crate::load(&store.0).unwrap();assert_eq!(stored.len(),4);
     assert!(stored.iter().find(|e|e.id=="travel-test-v1-0").unwrap().notes.as_ref().unwrap().contains("外套"));
+}
+
+#[test]
+fn model_ready_flag_cannot_bypass_missing_user_evidence() {
+    let store=Store::new();let mut args=fixture();
+    args["context"]["readiness_input"]["answers"]=json!([{ "key":"destination","value":"杭州"}]);
+    assert!(handle(crate::APP,"daycast.plan.sync",&args,&store.0).unwrap_err().contains("关键信息"));
+    assert!(!crate::store_path(&store.0).exists());assert!(octosense_calendar_service::travel::events(&store.0).unwrap().is_empty());
+}
+#[test]
+fn daily_clothing_and_packing_must_reference_real_items() {
+    let mut a=fixture();a["plan"]["daily_outfits"][0]["items"][0]["item"]=json!("不存在的毛衣");assert!(validate(&a).is_err());
+    a=fixture();a["plan"]["packing"][1]["source"]=json!("wardrobe");assert!(validate(&a).is_err());
+    a=fixture();a["plan"]["daily_outfits"]=json!([]);assert!(validate(&a).is_err());
+}
+#[test]
+fn system_calendar_conflict_prevents_both_writes_and_retries_do_not_duplicate() {
+    let store=Store::new();let now=chrono::Local::now().naive_local();
+    octosense_calendar_service::handle("os.calendar","add_event",&json!({"title":"系统日历会议","start":"2030-01-01T12:30","end":"2030-01-01T13:30"}),&store.0,now,None).unwrap();
+    assert!(handle(crate::APP,"daycast.plan.sync",&fixture(),&store.0).unwrap_err().contains("系统日历"));
+    assert!(!crate::store_path(&store.0).exists());assert_eq!(octosense_calendar_service::travel::events(&store.0).unwrap().len(),1);
+    let store=Store::new();handle(crate::APP,"daycast.plan.sync",&fixture(),&store.0).unwrap();handle(crate::APP,"daycast.plan.sync",&fixture(),&store.0).unwrap();
+    let sys=octosense_calendar_service::travel::events(&store.0).unwrap();assert_eq!(sys.len(),2);assert!(sys[0].notes.contains("打包"));
+}
+#[test]
+fn weather_recheck_only_proposes_and_replacement_requires_confirmation() {
+    let store=Store::new();let a=fixture();
+    let synced=handle(crate::APP,"daycast.plan.sync",&a,&store.0).unwrap();
+    let before=std::fs::read(crate::store_path(&store.0)).unwrap();
+    let plan=&synced["events"][0]["plan_snapshot"];
+    let forecast=|rain:i32|json!({"destination":"杭州","data":{"daily":{"time":["2030-01-01"],"precipitation_probability_max":[rain]}}});
+    let checked=handle(crate::APP,"daycast.plan.recheck",&json!({"plan":plan,"baseline":forecast(20),"current":forecast(80)}),&store.0).unwrap();
+    assert_eq!(checked["needs_review"],true);assert_eq!(checked["writes"],0);
+    assert_eq!(std::fs::read(crate::store_path(&store.0)).unwrap(),before);
+    let mut b=a.clone();b["plan_id"]=json!("travel-test-v2");b["replace_plan_id"]=json!("travel-test-v1");b["confirmed"]=json!(false);
+    assert!(handle(crate::APP,"daycast.plan.sync",&b,&store.0).is_err());
+    b["confirmed"]=json!(true);handle(crate::APP,"daycast.plan.sync",&b,&store.0).unwrap();handle(crate::APP,"daycast.plan.sync",&b,&store.0).unwrap();
+    assert_eq!(crate::load(&store.0).unwrap().len(),2);
+    let system=octosense_calendar_service::travel::events(&store.0).unwrap();assert_eq!(system.len(),2);assert!(system.iter().all(|e|e.id.starts_with("daycast-travel-test-v2-")));
 }
