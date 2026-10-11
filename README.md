@@ -1,16 +1,21 @@
 # Daycast
 
-Daycast 是运行在 OctoSense 上的天气与生活安排助手，版本 **v0.4.4**。它把实时天气、衣橱、天气偏好、日程和家庭关注城市放在同一条生活决策链中，帮助用户把天气预报转成可执行的出门与安排建议。
+Daycast 是运行在 OctoSense 上的天气与生活安排助手，源码版本 **v0.5.0**。它把实时天气、衣橱、天气偏好、日程和家庭关注城市放在同一条生活决策链中，帮助用户把天气预报转成可执行的出门与安排建议。
 
 ## 本次版本
 
+- 新增出行 Plan：AI 结合天气、衣橱、偏好和已有日程，只补充必要问题；有把握安排好就停止提问并生成行程
+- 固定的暂停入口保留需求与草稿，由用户主动继续；重启不会自动恢复模型请求或日程写入
+- 完整计划包含穿搭、明确标注的默认安排，以及带天气备选分支的原生流程图
+- 检查完整时间表并再次确认后，整份计划同步到 Daycast 日程；冲突时不部分写入，同一版本重试不重复添加
+- 支持从已保存日程打开完整计划与流程图，并在窄窗口收起侧栏文字
 - 统一重做今天、天空、问答、城市管理、我的、衣橱、日程和家庭提醒页面
 - 支持宽窄窗口，使用原生文字与 SVG 图标
 - 完善逐小时预报、未来七天趋势、日出日落、跨天日程和日期编辑
 - 支持家庭关注城市与天气提醒偏好
 - 修复家庭天气卡片中的日期显示问题
 - 修复普通聊天的日程草案显示与连续对话；冲突草案保留供修改
-- Daycast 应用清单版本更新为 `0.4.4`
+- Daycast 应用清单版本更新为 `0.5.0`；本次未创建新的 GitHub Release
 
 ## 项目入口
 
@@ -19,6 +24,7 @@ Daycast 是运行在 OctoSense 上的天气与生活安排助手，版本 **v0.4
 - 宿主接入说明：[`octoscript-weather-assistant/host-integration`](octoscript-weather-assistant/host-integration)
 - UI 改版记录与验证截图：[`octoscript-weather-assistant/docs/ui-redesign-2026-10-10`](octoscript-weather-assistant/docs/ui-redesign-2026-10-10)
 - 连续对话与草案测试：[`octoscript-weather-assistant/docs/dialogue-fix-2026-10-10`](octoscript-weather-assistant/docs/dialogue-fix-2026-10-10)
+- 出行 Plan 与实际验证：[`octoscript-weather-assistant/docs/travel-plan-2026-10-11`](octoscript-weather-assistant/docs/travel-plan-2026-10-11)
 - 隐私说明：[`octoscript-weather-assistant/PRIVACY.md`](octoscript-weather-assistant/PRIVACY.md)
 
 ## 运行
@@ -39,7 +45,7 @@ python <OctoScript-App-Design-Flow 路径>\tools\octo shot 8141 preview.png
 
 ## 版本
 
-当前版本：**daycast-v0.4.4**
+当前源码版本：**v0.5.0**；此前发布版本：**daycast-v0.4.4**。
 
 - Git 标签：[`daycast-v0.4.4`](https://github.com/buqizixv/shaotangjiabing/releases/tag/daycast-v0.4.4)
 - UI 日期修复提交：[`5d95270`](https://github.com/buqizixv/shaotangjiabing/commit/5d9527086d14b2c479aebd7866a76e28905a819a)

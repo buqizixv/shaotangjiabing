@@ -19,7 +19,7 @@
   ],
   "id": "weather-assistant",
   "integrity": {
-    "bundle_blake3": "a1da2688267268db0bf01e5541936bcd790ffc3aee353dcfdf7df423818ec2e4"
+    "bundle_blake3": "fc9d91aed902d2365d24a00e8d0e8bc5cb891fa58afb9151e23633e9c67c2025"
   },
   "name": "Daycast",
   "network": {
@@ -32,5 +32,5 @@
   "storage": {
     "max_bytes": 16777216
   },
-  "version": "0.4.4"
+  "version": "0.5.0"
 }

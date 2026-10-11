@@ -1,0 +1,35 @@
+{
+  "date": "2026-10-11",
+  "source_version": "0.5.0",
+  "bundle_digest": "fc9d91aed902d2365d24a00e8d0e8bc5cb891fa58afb9151e23633e9c67c2025",
+  "runtime": "Windows native Splash in customized OctoSense; hidden windows and isolated QA data",
+  "exe_sha256": "f5d46a5d04de559b968f26d2031992631f3a5456f537e147319e97a20cbc970a",
+  "exe_bytes": 323299840,
+  "tests": {
+    "page_and_state_passed": 34,
+    "plan_host_passed": 8,
+    "other_host_passed": 4,
+    "live_weather_ignored": 1
+  },
+  "build": {
+    "desktop_release": "passed",
+    "desktop_mobile_apps_feature_check": "passed"
+  },
+  "native_checks": [
+    "asking, pause, resume",
+    "ready draft and weather branch flowchart",
+    "full timeline review and explicit second confirmation",
+    "320 and 390 layout points, standalone shell resize callback emulated in QA copy",
+    "release batch sync: 4 events with notes and full plan snapshot",
+    "release opens saved plan from calendar",
+    "new draft leaves saved calendar intact",
+    "unconfigured model error retains demand and can pause"
+  ],
+  "limitations": [
+    "Real provider generation quality was not tested in this run.",
+    "Pause ignores late results; it does not guarantee provider-side cancellation.",
+    "Only the Daycast calendar is supported; no external calendar export.",
+    "No Android or iOS device run."
+  ],
+  "qa_data": "Isolated test data only; no existing user calendar was touched."
+}

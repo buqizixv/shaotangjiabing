@@ -9,6 +9,8 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+mod plans;
+
 pub const APP: &str = "os.weather-assistant";
 pub const AGENT_ADD_TOOL: &str = "daycast.schedule.add";
 const EVENTS_MAX: usize = 500;
@@ -40,6 +42,12 @@ pub struct Event {
     pub title: String,
     pub start: String,
     pub end: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_snapshot: Option<plans::Plan>,
 }
 
 fn store_path(host_dir: &Path) -> PathBuf {
@@ -59,17 +67,7 @@ fn load(host_dir: &Path) -> Result<Vec<Event>, String> {
 }
 
 fn save(host_dir: &Path, events: &[Event]) -> Result<(), String> {
-    let path = store_path(host_dir);
-    let dir = path.parent().expect("schedule path has parent");
-    std::fs::create_dir_all(dir).map_err(|e| format!("Daycast cannot save its schedule: {e}"))?;
-    let temp = dir.join(format!(".schedule-{}.tmp", std::process::id()));
-    std::fs::write(&temp, serde_json::to_vec_pretty(events).expect("events serialize"))
-        .map_err(|e| format!("Daycast cannot save its schedule: {e}"))?;
-    #[cfg(windows)]
-    if path.exists() {
-        std::fs::remove_file(&path).map_err(|e| format!("Daycast cannot replace its schedule: {e}"))?;
-    }
-    std::fs::rename(&temp, &path).map_err(|e| format!("Daycast cannot save its schedule: {e}"))
+    plans::atomic_write(&store_path(host_dir), &serde_json::to_vec_pretty(events).expect("events serialize"))
 }
 
 fn text<'a>(args: &'a Value, key: &str) -> &'a str {
@@ -95,13 +93,15 @@ fn overlaps(a: &Event, start: &str, end: &str) -> bool {
 /// `schedule.list` may include the app's old local schedule once; it is
 /// merged by title and time, making migration safe to repeat.
 pub fn handle(app: &str, method: &str, args: &Value, host_dir: &Path) -> Result<Value, String> {
-    if app != APP {
+    if app != APP && app != "weather-assistant" {
         return Err("the Daycast schedule belongs to Daycast".into());
     }
     static STORE: Mutex<()> = Mutex::new(());
     let _guard = STORE.lock().unwrap_or_else(|error| error.into_inner());
     let mut events = load(host_dir)?;
     match method {
+        "daycast.plan.validate" => plans::validate_reply(args, &events),
+        "daycast.plan.sync" => plans::sync(args, &mut events, host_dir),
         "daycast.schedule.list" => {
             if let Some(legacy) = args.get("legacy").and_then(Value::as_array) {
                 for row in legacy {
@@ -111,7 +111,7 @@ pub fn handle(app: &str, method: &str, args: &Value, host_dir: &Path) -> Result<
                     let (Ok(start_time), Ok(end_time)) = (parse_time(start), parse_time(end)) else { continue };
                     let (start, end) = (stamp(start_time), stamp(end_time));
                     if title.is_empty() || start_time >= end_time || events.iter().any(|e| e.title == title && e.start == start && e.end == end) { continue }
-                    events.push(Event { id: format!("daycast-{}", Local::now().timestamp_nanos_opt().unwrap_or_default()), title: title.chars().take(80).collect(), start, end });
+                    events.push(Event { id: format!("daycast-{}", Local::now().timestamp_nanos_opt().unwrap_or_default()), title: title.chars().take(80).collect(), start, end, notes: None, plan_id: None, plan_snapshot: None });
                 }
                 if events.len() > EVENTS_MAX { events.truncate(EVENTS_MAX); }
                 save(host_dir, &events)?;
@@ -130,7 +130,7 @@ pub fn handle(app: &str, method: &str, args: &Value, host_dir: &Path) -> Result<
             if events.iter().any(|event| overlaps(event, &start, &end)) {
                 return Err("That time overlaps an existing Daycast event. Choose another time.".into());
             }
-            let event = Event { id: format!("daycast-{}", Local::now().timestamp_nanos_opt().unwrap_or_default()), title: title.to_string(), start, end };
+            let event = Event { id: format!("daycast-{}", Local::now().timestamp_nanos_opt().unwrap_or_default()), title: title.to_string(), start, end, notes: None, plan_id: None, plan_snapshot: None };
             events.push(event.clone());
             save(host_dir, &events)?;
             Ok(json!({"event": event}))

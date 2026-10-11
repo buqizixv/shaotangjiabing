@@ -47,6 +47,7 @@ let clothing_form_status = ""
 let schedule_date = ""
 let selected_schedule_date = ""
 let clothing_photo_view_index = 0
+let compact_layout = false
 let wide_layout = true
 let desktop_bottom = 28
 let schedule_title = ""
@@ -1068,7 +1069,15 @@ fn ask_today_scene(kind){
 }
 fn on_app_resize(width, height){
     if width <= 0 || height <= 0 { return }
-    ui.sidebar_footer.set_visible(height >= 740)
+    let next_compact = width < 700
+    ui.sidebar_footer.set_visible(height >= 740 && !next_compact)
+    if next_compact != compact_layout {
+        compact_layout = next_compact
+        ui.brand_title.set_visible(!compact_layout)
+        ui.brand_tagline.set_visible(!compact_layout)
+        ui.sidebar.render_style()
+        ui.navigation.render()
+    }
     let next_wide = width >= 1040
     let next_bottom = if height >= 740 {80} else {28}
     if next_bottom != desktop_bottom { desktop_bottom = next_bottom; ui.main_column.render_style() }
@@ -1170,6 +1179,275 @@ fn temperature_position(value, rows){
     return 0.08 + (value - low) / (high - low) * 0.84
 }
 
+// Travel Plan owns its conversation and draft, separate from ordinary Q&A.
+let trip_state = "idle"
+let trip_previous_state = "idle"
+let trip_generation = 0
+let trip_revision = 0
+let trip_id = ""
+let trip_brief = ""
+let trip_memory = ""
+let trip_messages = []
+let trip_question = ""
+let trip_choices = []
+let trip_draft = nil
+let trip_context = nil
+let trip_status = ""
+let trip_review = false
+let trip_reset_review = false
+let trip_started_at = 0
+let trip_history_focus = false
+let trip_event_snapshot = nil
+
+fn save_trip(){
+    fs.write("travel-plan.json", {version: 1 state: trip_state previous_state: trip_previous_state revision: trip_revision id: trip_id brief: trip_brief memory: trip_memory messages: trip_messages question: trip_question choices: trip_choices draft: trip_draft context: trip_context status: trip_status}.to_json())
+}
+fn load_trip(){
+    if !fs.exists("travel-plan.json") { return }
+    let saved = fs.read("travel-plan.json").parse_json()
+    if saved == nil || saved.version != 1 || saved.messages == nil { return }
+    trip_state = saved.state
+    trip_previous_state = saved.previous_state
+    trip_revision = saved.revision
+    trip_id = saved.id
+    trip_brief = saved.brief
+    if saved.to_json().search("\"memory\"") >= 0 && saved.memory != nil {trip_memory = saved.memory}
+    trip_messages = saved.messages
+    trip_question = saved.question
+    trip_choices = saved.choices
+    trip_draft = saved.draft
+    trip_context = saved.context
+    trip_status = saved.status
+    // Never automatically restart a model call or a calendar write on launch.
+    if trip_state == "thinking" { trip_previous_state = "thinking"; trip_state = "paused"; trip_status = "上次规划尚未结束；草稿已保留，由你主动继续。"; save_trip() }
+    if trip_state == "syncing" { trip_state = "ready"; trip_status = "上次同步结果待核对。可查看日程，或确认重试；同一版本不会重复添加。"; save_trip() }
+}
+fn trip_local_date(){
+    let now = local_time()
+    return "" + now.year + "-" + if now.month < 10 {"0"} else {""} + now.month + "-" + if now.day < 10 {"0"} else {""} + now.day
+}
+fn trip_local_datetime(){
+    let now = local_time()
+    return trip_local_date() + "T" + if now.hour < 10 {"0"} else {""} + now.hour + ":" + if now.minute < 10 {"0"} else {""} + now.minute
+}
+fn trip_active(){ return trip_state == "thinking" || trip_state == "syncing" }
+fn trip_state_label(){
+    if trip_state == "thinking" { return "正在判断 · " + floor(time_now() - trip_started_at) + " 秒" }
+    if trip_state == "paused" { return "已暂停 · 草稿保留" }
+    if trip_state == "ready" { return "已停止提问 · 计划已生成" }
+    if trip_state == "synced" { return "已同步到日程" }
+    if trip_state == "syncing" { return "正在同步完整行程…" }
+    if trip_state == "error" { return "需要调整或重试" }
+    if trip_state == "asking" { return "只补充关键问题" }
+    return "从一句出行想法开始"
+}
+fn trip_keep_messages(){
+    let kept = []
+    for i in trip_messages.len() { if i == 0 || i >= trip_messages.len() - 23 { kept.push(trip_messages[i]) } }
+    trip_messages = kept
+}
+fn trip_forecast_dates(){
+    let rows = []
+    if current_weather != nil && current_weather.to_json().search("\"daily\"") >= 0 && current_weather.daily != nil && current_weather.daily.to_json().search("\"time\"") >= 0 && current_weather.daily.time != nil { for date in current_weather.daily.time { rows.push(date) } }
+    return rows
+}
+fn trip_forecast_label(){
+    let dates = trip_forecast_dates()
+    if dates.len() == 0 {return "暂无对应预报，天气会标明待核实。"}
+    return "预报范围：" + dates[0] + " 至 " + dates[dates.len() - 1]
+}
+fn trip_hourly_forecast(){
+    let rows = []
+    if current_weather == nil || current_weather.to_json().search("\"hourly\"") < 0 || current_weather.hourly == nil || current_weather.hourly.to_json().search("\"time\"") < 0 || current_weather.hourly.time == nil { return rows }
+    let hours = current_weather.hourly
+    let fields = hours.to_json()
+    for i in hours.time.len() {
+        if i < 168 {
+            let temp = nil
+            let rain = nil
+            let code = nil
+            if fields.search("\"temperature_2m\"") >= 0 && hours.temperature_2m != nil && i < hours.temperature_2m.len() { temp = hours.temperature_2m[i] }
+            if fields.search("\"precipitation_probability\"") >= 0 && hours.precipitation_probability != nil && i < hours.precipitation_probability.len() { rain = hours.precipitation_probability[i] }
+            if fields.search("\"weather_code\"") >= 0 && hours.weather_code != nil && i < hours.weather_code.len() { code = hours.weather_code[i] }
+            rows.push({time: hours.time[i] temperature_c: temp precipitation_probability_percent: rain weather_code: code})
+        }
+    }
+    return rows
+}
+fn trip_profile_context(){ return {weather_city: current_city.name forecast_dates: trip_forecast_dates() wardrobe: wardrobe} }
+fn trip_schema(){
+    let text = {type: "string" maxLength: 160}
+    let step = {type: "object" properties: {title: {type: "string" maxLength: 80} start: {type: "string" maxLength: 16} end: {type: "string" maxLength: 16} location: {type: "string" maxLength: 120} details: {type: "string" maxLength: 600}} required: ["title" "start" "end" "location" "details"] additionalProperties: false}
+    let plan = {type: "object" properties: {
+        title: {type: "string" maxLength: 80} destination: {type: "string" maxLength: 100} date: {type: "string" maxLength: 10}
+        party: {type: "string" maxLength: 80} transport: {type: "string" maxLength: 120} budget_note: text
+        summary: {type: "string" maxLength: 800} readiness_reason: {type: "string" maxLength: 400}
+        facts: {type: "array" maxItems: 8 items: {type: "object" properties: {label: {type: "string" maxLength: 40} value: text source: {type: "string" enum: ["user" "profile" "default"]}} required: ["label" "value" "source"] additionalProperties: false}}
+        assumptions: {type: "array" maxItems: 8 items: {type: "string" maxLength: 240}}
+        outfit: {type: "array" maxItems: 6 items: {type: "object" properties: {item: {type: "string" maxLength: 80} reason: {type: "string" maxLength: 200}} required: ["item" "reason"] additionalProperties: false}}
+        uses_forecast: {type: "boolean"} weather_city: {type: "string" maxLength: 100} weather_summary: {type: "string" maxLength: 400}
+        steps: {type: "array" maxItems: 12 items: step}
+        alternatives: {type: "array" maxItems: 6 items: {type: "object" properties: {step_index: {type: "integer" minimum: 0 maximum: 11} condition: text title: {type: "string" maxLength: 80} details: {type: "string" maxLength: 600}} required: ["step_index" "condition" "title" "details"] additionalProperties: false}}
+    } required: ["title" "destination" "date" "party" "transport" "budget_note" "summary" "readiness_reason" "facts" "assumptions" "outfit" "uses_forecast" "weather_city" "weather_summary" "steps" "alternatives"] additionalProperties: false}
+    return {type: "object" properties: {ready: {type: "boolean"} understanding: {type: "string" maxLength: 2400} answer: {type: "string" minLength: 1 maxLength: 900} question: {type: "string" maxLength: 300} choices: {type: "array" maxItems: 4 items: {type: "string" maxLength: 80}} plan: plan} required: ["ready" "understanding" "answer" "question" "choices" "plan"] additionalProperties: false}
+}
+fn trip_task(){
+    return "你是 Daycast 出行 Plan 规划助手。目标是根据出行需求、真实天气、衣橱、天气偏好和已有日程，安排一份适合本次出行的可执行行程。最新需求在 conversation_history 的最后，initial_brief 保留最初目标。你必须自行判断何时有把握安排好，不设固定问题数，不要为了凑齐问卷持续追问。只要目的地、日期/时间范围和真正影响执行的限制足够明确，且能够给出合理交通缓冲、休息与天气备选，就返回 ready=true 并提供完整 plan；停止提问，question=''、choices=[]。可选的饮食、精确预算等未指定时，可以按合理默认方案安排，但必须写入 assumptions/facts.source='default'，不能说用户已经确认。只有关键信息缺失、相互矛盾或实质影响行程时，ready=false，只问一个必要问题，给0到4个简短选项；answer 说明为什么需要问。不重复已经明确的信息，不询问无关个人信息，不声称正在无限轮次沟通。用户表示结束、暂停或不想继续时不要继续追问；应用提供主动暂停入口。\n日期按 current_local_datetime 的本地年月日解释，不得用天气缓存日期当今天；活动必须用 YYYY-MM-DDTHH:mm，按时间顺序排列，1到12项，不相互重叠，尽量不与 existing_schedule 冲突；时间范围包括往返、合理换乘和休息缓冲。不得修改用户明确时间或已有日程；不确定的交通时间/营业信息写成需核对的假设，不能伪造已查询事实。预算只给上限或估算并注明，不编造精确票价，不承诺订票或预订。\n天气只依据给出的 forecast_location 和 daily/hourly_forecast，匹配目的地和出行日期；没有对应预报时 uses_forecast=false，写明天气尚未核实，仍可用保守安排及可执行备选生成行程。不能把当前城市预报冒充另一目的地的天气。需要具体目的地天气时可请用户通过页面的选择天气地点切换城市，不猜经纬度；有对应预报时 uses_forecast=true、weather_city 必须等于 forecast_location.name，具体时段结论必须对应逐小时数据，缺测不要推断为晴天。极端天气优先取消危险活动或替换为安全的备选，不为了完成计划安排冒险活动。\n穿搭 outfit 仅从 wardrobe 中实际存在的 item 类型选择，写出结合体感偏好的理由；衣橱空时 outfit=[]，可以在 assumptions 提醒需要准备的物品，不声称已拥有。facts.source 分别用 user、profile、default，如实区分用户明确需求、已存偏好与默认安排。plan.readiness_reason 用具体、易理解的依据解释为什么足够生成，不输出没有来源的置信度百分比。plan.alternatives 至少一条，用 step_index 对应从0开始的主行程序号，描述如果出现该天气条件，同一时段替换成什么、在哪里避雨/避热或提前返程，其他后续行程怎样衔接。备选不另行写入重复日程。不要输出任意代码、SVG、HTML、Mermaid，流程图由应用按 steps 与 alternatives 生成。任何 ready 的计划只是待确认的提案，不能声称已经同步或保存到日程；要等用户点击确认。若 ready=false，plan 的字符串设为空，数组为空，uses_forecast=false；不要伪造未完整的成品。validation_feedback 是应用检查发现的问题，修改计划或只询问解决问题的必要信息，不重复旧的错误。"
+}
+fn trip_tick(ticket){
+    if ticket != trip_generation || trip_state != "thinking" { return }
+    if page == "plan" { ui.trip_run_status.set_text(trip_state_label()) }
+    start_timeout(1.0, || trip_tick(ticket))
+}
+fn trip_failure(ticket, message){
+    if ticket != trip_generation || trip_state == "paused" { return }
+    trip_state = "error"
+    trip_status = message
+    trip_review = false
+    save_trip()
+    if page == "plan" { ui.content.render() }
+}
+fn accept_trip_model(result, ticket, context){
+    if ticket != trip_generation || trip_state != "thinking" { return }
+    if !result.is_ok || result.data == nil || result.data.output == nil { trip_failure(ticket, "AI 暂时不可用。需求和草稿已保留，可以重试或暂停。"); return }
+    let output = result.data.output
+    trip_memory = output.understanding
+    if output.ready == true {
+        host.request("storage.daycast.plan.validate", {plan: output.plan context: context}, fn(validation){
+            if ticket != trip_generation || trip_state != "thinking" { return }
+            if !validation.is_ok || validation.data == nil || validation.data.plan == nil {
+                trip_failure(ticket, "计划尚未通过时间、衣橱或天气范围检查：" + if validation.error == nil {"宿主暂未提供计划校验服务。"} else {validation.error})
+                return
+            }
+            trip_draft = validation.data.plan
+            trip_context = context
+            trip_revision = trip_revision + 1
+            trip_id = "travel-" + floor(time_now() * 1000) + "-" + trip_revision
+            trip_state = "ready"
+            trip_question = ""
+            trip_choices = []
+            trip_status = "信息足够，已停止提问。完整行程等你确认后才同步。"
+            trip_messages.push({role: "assistant" content: output.answer})
+            trip_keep_messages()
+            save_trip()
+            if page == "plan" { ui.content.render() }
+        })
+    } else {
+        let next_question = output.question.trim()
+        if next_question == "" { trip_failure(ticket, "AI 未给出必要的问题或完整计划；需求已保留，请重试。"); return }
+        if next_question == trip_question && trip_messages.len() > 1 && trip_messages[trip_messages.len() - 1].role == "user" {
+            trip_failure(ticket, "刚才的问题重复了，已停止继续追问。可以补充具体限制后重试。"); return
+        }
+        trip_state = "asking"
+        trip_question = next_question
+        trip_choices = output.choices
+        trip_messages.push({role: "assistant" content: output.answer + "\n" + next_question})
+        trip_keep_messages()
+        trip_status = ""
+        save_trip()
+        if page == "plan" { ui.content.render() }
+    }
+}
+fn call_trip_model(ticket){
+    if ticket != trip_generation || trip_state != "thinking" { return }
+    let context = trip_profile_context()
+    let last_draft = trip_draft
+    host.request("model.complete", {task: trip_task() + " understood_constraints 是上次压缩的已知约束；结合最新消息更新 understanding，保留用户明确的目的地、日期、同行、交通、预算上限、饮食/行动限制、已拒绝选项和默认安排，最新明确更正优先；不能把推测写成用户确认。" input: {
+        initial_brief: trip_brief understood_constraints: trip_memory conversation_history: trip_messages previous_plan: last_draft
+        current_local_datetime: trip_local_datetime() forecast_location: current_city
+        current_weather: if current_weather == nil || current_weather.to_json().search("\"current\"") < 0 {nil} else {current_weather.current}
+        daily_forecast: if current_weather == nil || current_weather.to_json().search("\"daily\"") < 0 {nil} else {current_weather.daily}
+        hourly_forecast: trip_hourly_forecast() forecast_dates: context.forecast_dates
+        wardrobe: wardrobe_context() preferences: preferences existing_schedule: schedule_context()
+        validation_feedback: trip_status
+    } schema: trip_schema() class: "strong"}, fn(result){ accept_trip_model(result, ticket, context) })
+}
+fn run_trip_request(){
+    if trip_state == "paused" || trip_state == "syncing" || trip_brief == "" { return }
+    trip_generation = trip_generation + 1
+    let ticket = trip_generation
+    trip_state = "thinking"
+    trip_started_at = time_now()
+    trip_review = false
+    save_trip()
+    ui.content.render()
+    trip_tick(ticket)
+    start_timeout(90.0, || { if ticket == trip_generation && trip_state == "thinking" { trip_generation = trip_generation + 1; trip_state = "error"; trip_status = "本次等待超时，已停止推进。需求已保留，可以重试或暂停。"; save_trip(); if page == "plan" {ui.content.render()} } })
+    // Re-read the shared calendar before planning, then validate again at sync.
+    host.request("storage.daycast.schedule.list", {}, fn(result){
+        if ticket != trip_generation || trip_state != "thinking" { return }
+        if !result.is_ok || result.data == nil || result.data.events == nil { trip_failure(ticket, "暂时无法核对已有日程。请重试，草稿不会自动同步。"); return }
+        schedule = result.data.events
+        call_trip_model(ticket)
+    })
+}
+fn send_trip_text(text){
+    let message = text.trim()
+    if message == "" || trip_active() || trip_state == "paused" { return }
+    if message.len() > 1200 { trip_status = "请把这条需求控制在 1200 字以内。"; ui.content.render(); return }
+    if trip_brief == "" { trip_brief = message }
+    trip_messages.push({role: "user" content: message})
+    trip_keep_messages()
+    run_trip_request()
+}
+fn send_trip_input(){ let message = ui.trip_input.text(); ui.trip_input.set_text(""); send_trip_text(message) }
+fn pause_trip(){
+    if trip_state == "syncing" || trip_state == "synced" || trip_state == "ready" || trip_state == "idle" { return }
+    trip_previous_state = trip_state
+    trip_generation = trip_generation + 1
+    trip_state = "paused"
+    trip_status = "你已暂停规划。当前需求和草稿已保留，不会继续提问或自动生成。"
+    trip_review = false
+    save_trip()
+    ui.content.render()
+}
+fn resume_trip(){
+    if trip_state != "paused" { return }
+    trip_state = if trip_previous_state == "asking" && trip_question != "" {"asking"} else {"error"}
+    trip_status = ""
+    save_trip()
+    if trip_state == "asking" {ui.content.render()} else {run_trip_request()}
+}
+fn reset_trip(){
+    if trip_state == "syncing" { return }
+    trip_generation = trip_generation + 1
+    trip_state = "idle"; trip_previous_state = "idle"; trip_id = ""; trip_brief = ""; trip_memory = ""; trip_messages = []; trip_question = ""; trip_choices = []; trip_draft = nil; trip_context = nil; trip_status = ""; trip_review = false; trip_history_focus = false
+    save_trip(); ui.content.render()
+}
+fn review_trip(){
+    if trip_state != "ready" || trip_draft == nil { return }
+    trip_review = true
+    ui.content.render()
+}
+fn sync_trip(){
+    if trip_state != "ready" || !trip_review || trip_draft == nil || trip_context == nil { return }
+    trip_state = "syncing"
+    trip_review = false
+    trip_generation = trip_generation + 1
+    let ticket = trip_generation
+    save_trip(); ui.content.render()
+    host.request("storage.daycast.plan.sync", {plan_id: trip_id plan: trip_draft context: trip_context confirmed: true}, fn(result){
+        if ticket != trip_generation || trip_state != "syncing" { return }
+        if result.is_ok && result.data != nil && result.data.events != nil {
+            schedule = result.data.events
+            trip_state = "synced"
+            trip_status = "已加入 " + result.data.count + " 项行程，穿搭、天气备选和流程图一起保存在日程详情中。"
+        } else {
+            trip_state = "ready"
+            trip_status = "同步未完成：" + if result.error == nil {"请先查看日程再重试，同一版本不会重复添加。"} else {result.error}
+        }
+        save_trip(); ui.content.render()
+    })
+    start_timeout(65.0, || { if ticket == trip_generation && trip_state == "syncing" { trip_generation = trip_generation + 1; trip_state = "ready"; trip_status = "同步结果暂未确认。请先查看日程；确认重试同一版本不会重复添加。"; save_trip(); if page == "plan" {ui.content.render()} } })
+}
+fn trip_source_label(source){ if source == "user" {return "你已说明"}; if source == "profile" {return "生活资料"}; return "默认安排 · 可改" }
+fn trip_alternatives_for(plan, index){ let rows = []; for row in plan.alternatives {if row.step_index == index {rows.push(row)}}; return rows }
+fn show_trip_from_event(event){
+    if event.to_json().search("\"plan_snapshot\"") < 0 || event.plan_snapshot == nil { return }
+    trip_event_snapshot = event.plan_snapshot
+    goto("plan-details")
+}
+
 let ink = #x253445
 let muted = #x697482
 let orange = #xb75b35
@@ -1198,23 +1476,27 @@ SolidView{width: Fill height: Fill flow: Right draw_bg.color: pale
     let Quiet = ButtonFlatter{height: 34 draw_text +: {color: muted color_hover: orange color_down: orange}}
     let Field = TextInput{width: Fill height: 44 padding: 12 draw_bg +: {color: pale color_hover: pale color_focus: soft color_empty: pale border_radius: 5.0 border_size: 0.0 color_2: vec4(-1.0) color_2_hover: vec4(-1.0) color_2_focus: vec4(-1.0) color_2_empty: vec4(-1.0)} draw_text +: {color: ink color_hover: ink color_focus: ink color_empty: muted color_empty_hover: muted text_style: DaycastRegular{font_size: 13}}}
     // finesse · product · warm weather surface + ink advice · daily overview
-    SolidView{width: 176 height: Fill flow: Down padding: Inset{left: 18 right: 18 top: 30 bottom: 24} spacing: 10 draw_bg.color: paper
+    sidebar := SolidView{width: 176 height: Fill flow: Down padding: Inset{left: 18 right: 18 top: 30 bottom: 24} spacing: 10 draw_bg.color: paper
+        on_render: || {me.width = if compact_layout {64} else {176}; me.padding = Inset{left: if compact_layout {8} else {18} right: if compact_layout {8} else {18} top: 30 bottom: 24}}
         View{width: Fill height: Fit flow: Right spacing: 9 align: Align{y: 0.5}
             Svg{width: 30 height: 30 animating: false draw_svg.svg: http_resource("{{assets}}/assets/daycast.svg")}
-            Label{text: "Daycast" padding: 0 draw_text.color: ink draw_text.text_style: DaycastBold{font_size: 20}}
+            brand_title := Label{text: "Daycast" padding: 0 draw_text.color: ink draw_text.text_style: DaycastBold{font_size: 20}}
         }
-        Label{text: "天气，与你的每一天。" padding: Inset{top: 4 bottom: 26} draw_text.color: muted draw_text.text_style.font_size: 11}
+        brand_tagline := Label{text: "天气，与你的每一天。" padding: Inset{top: 4 bottom: 26} draw_text.color: muted draw_text.text_style.font_size: 11}
         navigation := View{width: Fill height: Fit flow: Down spacing: 8 on_render: || {
-            ButtonFlat{text: "☀   今天" width: Fill height: 48 on_click: || goto("today") align: Align{x: 0.0 y: 0.5}
+            ButtonFlat{text: if compact_layout {"☀"} else {"☀   今天"} width: Fill height: 48 on_click: || goto("today") align: Align{x: 0.0 y: 0.5}
                 draw_bg +: {border_radius: 12.0 color: if page == "today" {soft} else {paper} color_hover: soft color_down: warm border_size: 0.0}
                 draw_text +: {color: if page == "today" {orange} else {muted} color_hover: orange color_down: orange text_style.font_size: 14}}
-            ButtonFlat{text: "☁   天空" width: Fill height: 48 on_click: || goto("sky") align: Align{x: 0.0 y: 0.5}
+            ButtonFlat{text: if compact_layout {"☁"} else {"☁   天空"} width: Fill height: 48 on_click: || goto("sky") align: Align{x: 0.0 y: 0.5}
                 draw_bg +: {border_radius: 12.0 color: if page == "sky" {soft} else {paper} color_hover: soft color_down: warm border_size: 0.0}
                 draw_text +: {color: if page == "sky" {orange} else {muted} color_hover: orange color_down: orange text_style.font_size: 14}}
-            ButtonFlat{text: "◉   问答" width: Fill height: 48 on_click: || goto("qa") align: Align{x: 0.0 y: 0.5}
+            ButtonFlat{text: if compact_layout {"↗"} else {"↗   出行 Plan"} width: Fill height: 48 on_click: || goto("plan") align: Align{x: 0.0 y: 0.5}
+                draw_bg +: {border_radius: 12.0 color: if page == "plan" || page == "plan-details" {soft} else {paper} color_hover: soft color_down: warm border_size: 0.0}
+                draw_text +: {color: if page == "plan" || page == "plan-details" {orange} else {muted} color_hover: orange color_down: orange text_style.font_size: 14}}
+            ButtonFlat{text: if compact_layout {"◉"} else {"◉   问答"} width: Fill height: 48 on_click: || goto("qa") align: Align{x: 0.0 y: 0.5}
                 draw_bg +: {border_radius: 12.0 color: if page == "qa" {soft} else {paper} color_hover: soft color_down: warm border_size: 0.0}
                 draw_text +: {color: if page == "qa" {orange} else {muted} color_hover: orange color_down: orange text_style.font_size: 14}}
-            ButtonFlat{text: "♡   我的" width: Fill height: 48 on_click: || goto("mine") align: Align{x: 0.0 y: 0.5}
+            ButtonFlat{text: if compact_layout {"♡"} else {"♡   我的"} width: Fill height: 48 on_click: || goto("mine") align: Align{x: 0.0 y: 0.5}
                 draw_bg +: {border_radius: 12.0 color: if mine_navigation() {soft} else {paper} color_hover: soft color_down: warm border_size: 0.0}
                 draw_text +: {color: if mine_navigation() {orange} else {muted} color_hover: orange color_down: orange text_style.font_size: 14}}
         }}
@@ -1228,7 +1510,7 @@ SolidView{width: Fill height: Fill flow: Right draw_bg.color: pale
         }
     }
     main_column := View{width: Fill height: Fill flow: Down padding: 28 spacing: 18 on_render: || {
-        me.padding = Inset{left: 28 right: 28 top: 28 bottom: desktop_bottom}
+        me.padding = Inset{left: if compact_layout {12} else {28} right: if compact_layout {12} else {28} top: if compact_layout {16} else {28} bottom: desktop_bottom}
     }
     content := View{width: Fill height: Fill flow: Down on_render: || {
 if page == "today" {
@@ -1492,6 +1774,262 @@ Label{width: 56 text: if days[i].rain == nil {"暂无"} else {"" + round(days[i]
 }
 }
 }
+if page == "plan" {
+    View{width: Fill height: Fill flow: Down spacing: 18
+        View{width: Fill height: Fit flow: Down spacing: 8
+            View{width: Fill height: Fit flow: if wide_layout {Flow.Right} else {Flow.Down} spacing: 10 align: Align{y: 0.5}
+                Heading{text: "把这次出行，慢慢想周全。" draw_text.text_style.font_size: if wide_layout {27} else {23}}
+                View{width: Fit height: Fit flow: Right spacing: 8
+                    if trip_state == "thinking" || trip_state == "asking" || trip_state == "error" {Quiet{text: "暂停规划" height: 44 on_click: || pause_trip()}}
+                    if trip_state != "syncing" {Quiet{text: "新建计划" height: 44 on_click: || {trip_reset_review = true; ui.content.render()}}}
+                }
+            }
+            Small{text: "AI 有把握就生成，你也可以随时暂停。同步日程仍由你确认。"}
+        }
+        trip_scroll := ScrollYView{width: Fill height: Fill flow: Down spacing: 20
+        if trip_reset_review {
+            Card{draw_bg.color: soft
+                Heading{text: "开始一份新的出行计划？"}
+                Small{text: "当前未同步的对话和草稿会被清空；已保存的日程不会删除。"}
+                View{width: Fill height: Fit flow: Right spacing: 10
+                    Primary{text: "确认新建" on_click: || {trip_reset_review = false; reset_trip()}}
+                    Quiet{text: "保留当前计划" on_click: || {trip_reset_review = false; ui.content.render()}}
+                }
+            }
+        }
+                    if trip_review && trip_state == "ready" {
+                        Card{draw_bg.color: soft
+                            Heading{text: "把这次出行，放进日程。"}
+                            Small{text: "请检查以下时间。穿搭、天气备选和完整流程图会作为日程详情一起保存。"}
+                            for step in trip_draft.steps {Small{text: step.start + " 至 " + step.end + "\n" + step.title draw_text.color: ink}}
+                            Caption{text: "同步前会重新检查已有日程；存在冲突则整份计划都不写入。"}
+                            Primary{text: "确认加入 " + trip_draft.steps.len() + " 项日程" width: Fill on_click: || sync_trip()}
+                            Quiet{text: "再想想" on_click: || {trip_review = false; ui.content.render()}}
+                        }
+                    }
+        Card{draw_bg.color: warm padding: 20
+            View{width: Fill height: Fit flow: if wide_layout {Flow.Right} else {Flow.Down} spacing: 18
+                View{width: Fill height: Fit flow: Down spacing: 5
+                    Heading{text: "所选天气地点 · " + current_city.name draw_text.text_style.font_size: 14}
+                    Caption{text: trip_forecast_label()}
+                    Quiet{text: "选择天气地点 ›" on_click: || goto("cities")}
+                }
+                View{width: Fill height: Fit flow: Down spacing: 7
+                    Heading{text: "带上你的衣橱" draw_text.text_style.font_size: 14}
+                    Small{text: if wardrobe.len() == 0 {"还没有记录衣物，建议不会假装你已拥有。"} else {joined_text(wardrobe)}}
+                }
+                View{width: Fill height: Fit flow: Down spacing: 7
+                    Heading{text: "记得你的小习惯" draw_text.text_style.font_size: 14}
+                    Small{text: if preferences.len() == 0 {"未设置天气偏好，可随时补充。"} else {joined_text(preferences)}}
+                }
+            }
+        }
+        View{width: Fill height: Fit flow: if wide_layout {Flow.Right} else {Flow.Down} spacing: 20
+            View{width: Fill{weight: 100 basis: 360 shrink: 1 min: if wide_layout {320} else {0}} height: Fit flow: Down spacing: 18
+                Card{spacing: 15
+                    View{width: Fill height: Fit flow: Right align: Align{y: 0.5} spacing: 8
+                        Heading{text: "与 Daycast 一起规划" draw_text.text_style.font_size: 16}
+                    }
+                    trip_run_status := Caption{text: trip_state_label() draw_text.color: orange}
+                    Hr{}
+                    if trip_messages.len() == 0 {
+                        Heading{text: "想去哪里，怎样度过？" draw_text.text_style.font_size: 21}
+                        Small{text: "说说出行日期、目的地、同行的人和你在意的事。已提供的信息不会反复询问。"}
+                        Caption{text: "例如：明天和朋友去公园，上午出发，傍晚前回来，公交出行，希望轻松一些。"}
+                    }
+                    if trip_messages.len() > 4 {
+                        Quiet{text: if trip_history_focus {"收起较早对话"} else {"查看较早对话 · " + (trip_messages.len() - 4) + " 条"} on_click: || {trip_history_focus = !trip_history_focus; ui.content.render()}}
+                        if trip_history_focus {ScrollYView{width: Fill height: 210 flow: Down spacing: 9
+                            for i in trip_messages.len() {if i < trip_messages.len() - 4 {Small{text: if trip_messages[i].role == "user" {"你：" + trip_messages[i].content} else {"Daycast：" + trip_messages[i].content}}}}
+                        }}
+                    }
+                    for i in trip_messages.len() {
+                        if i >= trip_messages.len() - 4 {
+                            RoundedView{width: Fill height: Fit flow: Down spacing: 8 padding: 16 draw_bg.border_radius: 12.0 draw_bg.color: if trip_messages[i].role == "user" {warm} else {pale}
+                                Caption{text: if trip_messages[i].role == "user" {"你"} else {"Daycast · 出行 Plan"} draw_text.color: orange}
+                                Small{text: trip_messages[i].content draw_text.color: ink}
+                            }
+                        }
+                    }
+                    if trip_state == "thinking" {
+                        Card{draw_bg.color: pale padding: 17
+                            Heading{text: "结合天气与生活资料判断中" draw_text.text_style.font_size: 15}
+                            Small{text: "正在核对限制、时间范围和天气备选。有把握后会直接生成完整行程。"}
+                            Caption{text: "你可以暂停，需求与草稿会保留。"}
+                        }
+                    }
+                    if trip_state == "asking" {
+                        Card{draw_bg.color: soft padding: 18
+                            Caption{text: "只确认影响本次行程的信息" draw_text.color: orange}
+                            Heading{text: trip_question draw_text.text_style.font_size: 17}
+                            for choice in trip_choices {Action{text: choice width: Fill height: Fit padding: 12 on_click: || send_trip_text(choice)}}
+                            Caption{text: "也可以在下面用自己的话回答。回答后由 AI 再判断是否已足够生成。"}
+                        }
+                    }
+                    if trip_state == "paused" {
+                        Card{draw_bg.color: pale padding: 22
+                            Heading{text: "你已暂停这次规划。" draw_text.text_style.font_size: 19}
+                            Small{text: "当前需求和草稿已保留。不再继续提问或生成，等你主动继续。"}
+                            if trip_question != "" {Caption{text: "继续后，从这里接上：" + trip_question}}
+                            Primary{text: "继续规划 →" on_click: || resume_trip()}
+                        }
+                    }
+                    if trip_state == "ready" || trip_state == "synced" {
+                        Card{draw_bg.color: sage padding: 18
+                            Heading{text: "停止提问，行程已生成。" draw_text.text_style.font_size: 16}
+                            Small{text: if trip_draft == nil {"完整行程已保留。"} else {trip_draft.readiness_reason} draw_text.color: ink}
+                            Caption{text: "可选细节按标明的默认安排处理，你随时可以补充修改。"}
+                        }
+                    }
+                    if trip_status != "" {Small{text: trip_status draw_text.color: orange}}
+                    if trip_state == "error" {Action{text: "重新判断 / 重试" on_click: || run_trip_request()}}
+                    if !trip_active() && trip_state != "paused" {
+                        Hr{}
+                        trip_input := Field{empty_text: if trip_state == "ready" || trip_state == "synced" {"想调整什么？补充新的要求…"} else {"说说这次出行的想法或回答问题…"} height: 56 on_return: |text| send_trip_input()}
+                        View{width: Fill height: Fit flow: Right spacing: 8 align: Align{y: 0.5}
+                            Caption{text: "不设固定问题数，够用就生成。"}
+                            Primary{text: "发送 →" on_click: || send_trip_input()}
+                        }
+                    }
+                }
+            }
+            View{width: Fill{weight: 135 basis: 430 shrink: 1 min: if wide_layout {360} else {0}} height: Fit flow: Down spacing: 18
+                if trip_draft == nil {
+                    Card{spacing: 17
+                        Heading{text: if trip_state == "paused" {"当前草稿，已为你保留"} else {"正在拼好这次出行"}}
+                        Caption{text: if trip_state == "paused" {"由你决定何时继续，不会自动推进。"} else {"只补齐必要信息，AI 有把握就生成。"}}
+                        Hr{}
+                        Svg{width: 38 height: 38 animating: false draw_svg.svg: http_resource("{{assets}}/assets/calendar.svg")}
+                        Heading{text: "先有想法，再安排时间。" draw_text.text_style.font_size: 23}
+                        Small{text: if trip_brief == "" {"告诉 Daycast 你的目的地、时间范围和特别限制，开始一份适合自己的行程。"} else {trip_brief}}
+                        Hr{}
+                        Heading{text: "这份计划会一起考虑" draw_text.text_style.font_size: 14}
+                        Small{text: "天气与体感偏好 · 已有衣物 · 同行和交通 · 休息缓冲 · 已有日程 · 雨天或高温备选"}
+                        Card{draw_bg.color: pale padding: 17
+                            Small{text: "信息足够时自动停止提问并生成完整流程图；生成之前不会写入日程。"}
+                        }
+                    }
+                } else {
+                    let plan = trip_draft
+                    Card{spacing: 14
+                        View{width: Fill height: Fit flow: Right spacing: 9 align: Align{y: 0.5}
+                            Heading{text: plan.title draw_text.text_style.font_size: 23}
+                            Caption{text: if trip_state == "synced" {"已加入日程"} else if trip_state == "ready" {"待你确认"} else {"上个版本 · 正在调整"} width: Fit draw_text.color: orange}
+                        }
+                        Small{text: plan.destination + "  ·  " + date_label(plan.date) + "  ·  " + plan.party}
+                        Caption{text: plan.transport + if plan.budget_note == "" {""} else {" · " + plan.budget_note}}
+                        Small{text: plan.summary draw_text.color: ink}
+                        Hr{}
+                        for fact in plan.facts {
+                            View{width: Fill height: Fit flow: Down spacing: 4
+                                Small{text: fact.label + "：" + fact.value draw_text.color: ink}
+                                Caption{text: trip_source_label(fact.source)}
+                            }
+                        }
+                        Card{draw_bg.color: warm padding: 16
+                            Heading{text: "天气与备选" draw_text.text_style.font_size: 14}
+                            Small{text: plan.weather_summary draw_text.color: ink}
+                            Caption{text: "出发前重新核对预报；未知数据不会假装已确认。"}
+                        }
+                        Heading{text: "从衣橱里，挑好这一身" draw_text.text_style.font_size: 14}
+                        if plan.outfit.len() == 0 {Caption{text: "没有从已记录衣物中选定穿搭，可补充衣橱后再调整。"}}
+                        for item in plan.outfit {
+                            RoundedView{width: Fill height: Fit flow: Right spacing: 10 padding: 12 align: Align{y: 0.5} draw_bg.color: pale draw_bg.border_radius: 10.0
+                                Svg{width: 25 height: 25 animating: false draw_svg.svg: http_resource("{{assets}}/assets/garment.svg")}
+                                View{width: Fill height: Fit flow: Down spacing: 4
+                                    Small{text: item.item draw_text.color: ink}
+                                    Caption{text: item.reason}
+                                }
+                            }
+                        }
+                        if plan.assumptions.len() > 0 {
+                            Hr{} Heading{text: "默认安排，随时可改" draw_text.text_style.font_size: 14}
+                            for assumption in plan.assumptions {Caption{text: "· " + assumption}}
+                        }
+                    }
+                    Card{spacing: 11
+                        Heading{text: "行程流程图" draw_text.text_style.font_size: 17}
+                        Caption{text: "主路线与天气备选，按实际时段衔接。"}
+                        for i in plan.steps.len() {
+                            let step = plan.steps[i]
+                            let alternatives = trip_alternatives_for(plan, i)
+                            if i > 0 {Label{width: Fill text: "↓" draw_text.color: muted draw_text.text_style.font_size: 19}}
+                            View{width: Fill height: Fit flow: Down spacing: 8
+                                RoundedView{width: Fill height: Fit flow: Down spacing: 6 padding: 16 draw_bg.color: pale draw_bg.border_radius: 12.0
+                                    Caption{text: step.start + " → " + step.end draw_text.color: orange}
+                                    Heading{text: step.title draw_text.text_style.font_size: 16}
+                                    if step.location != "" {Caption{text: "地点：" + step.location}}
+                                    Small{text: step.details}
+                                }
+                                for alternative in alternatives {
+                                    View{width: Fill height: Fit flow: Right spacing: 8
+                                        Label{text: "↘" draw_text.color: orange draw_text.text_style.font_size: 20}
+                                        Card{draw_bg.color: soft padding: 15
+                                            Caption{text: "如果：" + alternative.condition draw_text.color: orange}
+                                            Heading{text: alternative.title draw_text.text_style.font_size: 15}
+                                            Small{text: alternative.details}
+                                            Caption{text: "替换本段，之后按后续行程衔接。"}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Hr{}
+                        Caption{text: "备选作为计划附件保存，不另占重复日程。"}
+                        if trip_state == "ready" {
+                            Primary{text: "检查并同步日程 →" width: Fill on_click: || review_trip()}
+                            Caption{text: "确认后，一次加入 " + plan.steps.len() + " 项安排。"}
+                        }
+                        if trip_state == "synced" {Action{text: "查看已保存日程 ›" width: Fill on_click: || {selected_schedule_date = plan.date; goto("schedule")}}}
+                        if trip_state == "syncing" {Small{text: "正在保存完整行程，请等待同步结果。" draw_text.color: orange}}
+                    }
+
+                }
+            }
+        }
+        Caption{text: "天气、衣橱、偏好和日程仅发送给你已配置的模型；AI 提案需要你确认后才写入日程。"}
+    }
+    }
+}
+if page == "plan-details" && trip_event_snapshot != nil {
+    let plan = trip_event_snapshot
+    ScrollYView{width: Fill height: Fill flow: Down spacing: 20
+        View{width: Fill height: Fit flow: Right spacing: 9 align: Align{y: 0.5}
+            Heading{text: "保存的出行计划" draw_text.text_style.font_size: 27}
+            Quiet{text: "返回日程" on_click: || goto("schedule")}
+        }
+        Card{
+            Heading{text: plan.title draw_text.text_style.font_size: 24}
+            Small{text: plan.destination + " · " + plan.date + " · " + plan.party}
+            Small{text: plan.summary draw_text.color: ink}
+            Caption{text: "这是同步时保存的计划，天气说明以当时提供的数据为准。出发前请重新核对。"}
+            Hr{} Heading{text: "天气与穿搭" draw_text.text_style.font_size: 16}
+            Small{text: plan.weather_summary}
+            for item in plan.outfit {Small{text: "· " + item.item + "：" + item.reason}}
+            if plan.assumptions.len() > 0 {Hr{} Heading{text: "默认安排" draw_text.text_style.font_size: 16}}
+            for assumption in plan.assumptions {Small{text: "· " + assumption}}
+        }
+        Card{
+            Heading{text: "行程流程图"}
+            for i in plan.steps.len() {
+                let step = plan.steps[i]
+                if i > 0 {Label{width: Fill text: "↓" draw_text.color: muted draw_text.text_style.font_size: 20}}
+                Card{draw_bg.color: pale padding: 17
+                    Caption{text: step.start + " → " + step.end draw_text.color: orange}
+                    Heading{text: step.title draw_text.text_style.font_size: 17}
+                    Small{text: step.location + " · " + step.details}
+                    for alternative in trip_alternatives_for(plan, i) {
+                        Card{draw_bg.color: soft padding: 13
+                            Small{text: "↘ 如果 " + alternative.condition + "：" + alternative.title draw_text.color: orange}
+                            Caption{text: alternative.details}
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 if page == "qa" {
 qa_scroll := ScrollYView{width: Fill height: Fill flow: Down spacing: 20
 View{width: Fill height: Fit flow: Down spacing: 9
@@ -1824,6 +2362,7 @@ Caption{text: time_part(item.event.end)}
 View{width: Fill height: Fit flow: Down spacing: 8
 Heading{text: item.event.title draw_text.text_style.font_size: 17}
 Caption{text: item.event.start.split("T")[0] + " → " + item.event.end.split("T")[0]}
+if item.event.to_json().search("\"plan_snapshot\"") >= 0 && item.event.plan_snapshot != nil {Action{text: "查看出行计划与流程图 ›" on_click: || show_trip_from_event(item.event)}}
 }
 Quiet{text: "删除" on_click: || remove_schedule_item(item.index)}
 }
@@ -1946,4 +2485,4 @@ Heading{text: "再关注一座城市" }Small{text: "切换到家人的城市，�
 // Schedule startup only after the app view tree has been constructed. On a
 // cold launch, the old timer could fire while the dynamic content view was
 // still mounting, leaving the page blank until the user forced a redraw.
-start_timeout(0.05, || { ui.navigation.render(); ui.content.render(); load_data(); poll_family_weather() })
+start_timeout(0.05, || { ui.navigation.render(); ui.content.render(); load_data(); load_trip(); poll_family_weather() })
