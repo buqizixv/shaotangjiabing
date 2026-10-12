@@ -1,6 +1,6 @@
 # Daycast
 
-Daycast 是运行在 OctoSense 上的天气与生活安排助手，源码版本 **v0.6.0**。它把实时天气、衣橱、天气偏好、日程和家庭关注城市放在同一条生活决策链中，帮助用户把天气预报转成可执行的出门与安排建议。
+Daycast 是运行在 OctoSense 上的天气与生活安排助手，源码版本 **v0.5.0**。它把实时天气、衣橱、天气偏好、日程和家庭关注城市放在同一条生活决策链中，帮助用户把天气预报转成可执行的出门与安排建议。
 
 ## 本次版本
 
@@ -16,7 +16,7 @@ Daycast 是运行在 OctoSense 上的天气与生活安排助手，源码版本 
 - 支持家庭关注城市与天气提醒偏好
 - 修复家庭天气卡片中的日期显示问题
 - 修复普通聊天的日程草案显示与连续对话；冲突草案保留供修改
-- Daycast 应用清单版本更新为 `0.6.0`；本次未创建新的 GitHub Release
+- Daycast 应用清单版本更新为 `0.5.0`；本次未创建新的 GitHub Release
 
 ## 项目入口
 
@@ -46,7 +46,7 @@ python <OctoScript-App-Design-Flow 路径>\tools\octo shot 8141 preview.png
 
 ## 版本
 
-当前源码版本：**v0.6.0**；此前发布版本：**daycast-v0.4.4**。
+当前源码版本：**v0.5.0**；此前发布版本：**daycast-v0.4.4**。
 
 - Git 标签：[`daycast-v0.4.4`](https://github.com/buqizixv/shaotangjiabing/releases/tag/daycast-v0.4.4)
 - UI 日期修复提交：[`5d95270`](https://github.com/buqizixv/shaotangjiabing/commit/5d9527086d14b2c479aebd7866a76e28905a819a)

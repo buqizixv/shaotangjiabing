@@ -19,7 +19,7 @@
 3. 用配套 App Hub 的 `hub stamp` 重新计算复制后的 bundle 摘要。不能沿用不同文件集合的摘要。
 4. 按 OctoSense 自身的 AGENTS.md 准备固定版本依赖，再运行测试和构建。
 
-## 0.6.0 出行 Plan 接入
+## 0.5.0 出行 Plan 接入
 
 旧补丁不包含本次 Plan 逻辑。应用旧补丁后，需要人工合并此目录 `host-service/src/lib.rs` 的新事件字段与分发，并复制 `host-service/src/plans.rs` 及 `host-service/src/plans/tests.rs`；不要用旧补丁覆盖宿主已有服务。库继续使用宿主 workspace 的 chrono、serde 和 serde_json，没有新增依赖。
 
