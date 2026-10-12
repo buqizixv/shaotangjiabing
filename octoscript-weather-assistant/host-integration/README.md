@@ -17,7 +17,7 @@
 3. 用配套 App Hub 的 `hub stamp` 重新计算复制后的 bundle 摘要。不能沿用不同文件集合的摘要。
 4. 按 OctoSense 自身的 AGENTS.md 准备固定版本依赖，再运行测试和构建。
 
-## 0.5.0 出行 Plan 接入
+## 0.6.0 出行 Plan 接入
 
 旧补丁不包含本次 Plan 逻辑。应用旧补丁后，需要人工合并此目录 `host-service/src/lib.rs` 的新事件字段与分发，并复制 `host-service/src/plans.rs` 及 `host-service/src/plans/tests.rs`；不要用旧补丁覆盖宿主已有服务。库继续使用宿主 workspace 的 chrono、serde 和 serde_json，没有新增依赖。
 
@@ -25,7 +25,9 @@
 - `storage.daycast.plan.sync`：同样的计划与上下文，加 `plan_id` 和 `confirmed: true`。用户检查完整时间表并再次确认后才调用。宿主持锁复验冲突，整批进行一次文件替换，同一版本可以幂等重试。
 - 日程新增可选 `notes`、`plan_id`、`plan_snapshot`，旧日程仍可读取。日程详情按保存的步骤和备选绘制流程图，不执行模型生成的代码。
 
-本次在已有定制 Windows OctoSense 工作区运行了 34 项页面/状态回归测试、8 项 Plan 宿主测试，并构建桌面 release。模型结果通过结构化夹具驱动；真实服务商生成质量、外部日历和 Android/iOS 设备未验证。[完整记录](../docs/travel-plan-2026-10-11/README.md)。
+宿主根据用户消息证据与实际应用资料判定准备度，调用 `daycast.plan.inventory` 同时读取 Daycast 与 OctoSense 系统日历；`daycast.plan.assess` 提供准备度缺口，`daycast.plan.recheck` 只建议天气复核。生成、校验和同步仍由用户控制。系统日历桥接位于 `calendar-service/`，不授予 Daycast 通用日历写权限。不会监测航班。
+
+验证边界、界面截图、真实已执行测试和最终 release 构建状态见[完整记录](../docs/travel-plan-confidence-2026-10-11/README.zh-CN.md)。最终微调源码未重新构建 release；不得将先前二进制描述为含有最终版本。
 
 ## 已执行的验证
 

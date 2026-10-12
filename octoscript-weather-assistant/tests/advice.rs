@@ -489,6 +489,8 @@ fn time_now(){ 1800000000 }
 fn floor(value){value}
 fn local_time(){ {year:2026 month:10 day:11 hour:9 minute:5} }
 ui.trip_run_status = control
+let checked = {ready:true known:[] missing:[] weather:"已核实" calendar:"已盘点"}
+trip_weather = {destination:"太原" city:{name:"太原"} fetched_at:1800000000 data:{daily:{time:["2026-10-12"]}}}
 "#;
 fn trip_run(body: &str) -> Value { run(&format!("{TRIP_ENV}\n{body}")) }
 
@@ -509,16 +511,16 @@ fn travel_model_schema_and_real_profile_context_are_valid() {
     assert_eq!(result["input"]["current_local_datetime"], "2026-10-11T09:05");
     assert_eq!(result["input"]["forecast_dates"], json!(["2026-10-12"]));
     assert_eq!(result["input"]["understood_constraints"], "公交往返，不吃辣");
-    assert!(result["input"]["hourly_forecast"][0]["temperature_c"].is_null());
+    assert_eq!(result["input"]["destination_forecast"]["city"]["name"], "太原");
 }
 
 #[test]
 fn travel_pause_ignores_late_model_and_host_validation_replies() {
     let result = trip_run(r#"
         trip_state = "thinking"; trip_generation = 7; trip_brief = "明天出行"
-        accept_trip_model({is_ok:true data:{output:{ready:true understanding:"公交" plan:{} answer:"已安排"}}}, 7, {})
+        accept_trip_model({is_ok:true data:{output:{evidence:[] ready:true understanding:"公交" plan:{} answer:"已安排"}}}, 7, {})
         pause_trip()
-        pending[0].callback({is_ok:true data:{plan:{title:"迟到的计划"}}})
+        pending[0].callback({is_ok:true data:checked})
         accept_trip_model({is_ok:true data:{output:{ready:false understanding:"覆盖" question:"去哪里？" choices:[] answer:"再问"}}}, 7, {})
         {state:trip_state draft:trip_draft memory:trip_memory calls:pending.len() messages:trip_messages.len()}.to_json()
     "#);
@@ -530,14 +532,15 @@ fn travel_ready_stops_questions_and_never_writes_before_review() {
     let result = trip_run(r#"
         trip_state = "thinking"; trip_generation = 4; trip_brief = "公园半日"
         trip_question = "几点出发？"
-        accept_trip_model({is_ok:true data:{output:{ready:true understanding:"9点" plan:{} answer:"信息足够，行程如下。"}}}, 4, {weather_city:"太原"})
-        pending[0].callback({is_ok:true data:{plan:{title:"公园半日" steps:[{title:"乘车"}]}}})
+        accept_trip_model({is_ok:true data:{output:{evidence:[] ready:true understanding:"9点" plan:{} answer:"信息足够，行程如下。"}}}, 4, {weather_city:"太原"})
+        pending[0].callback({is_ok:true data:checked})
+        pending[1].callback({is_ok:true data:{plan:{title:"公园半日" steps:[{title:"乘车"}]}}})
         sync_trip()
         let before = pending.len()
         review_trip(); sync_trip(); sync_trip()
-        {state:trip_state question:trip_question before:before calls:pending.len() method:pending[1].method confirmed:pending[1].args.confirmed}.to_json()
+        {state:trip_state question:trip_question before:before calls:pending.len() method:pending[2].method confirmed:pending[2].args.confirmed}.to_json()
     "#);
-    assert_eq!(result, json!({"state":"syncing","question":"","before":1,"calls":2,"method":"storage.daycast.plan.sync","confirmed":true}));
+    assert_eq!(result, json!({"state":"syncing","question":"","before":2,"calls":3,"method":"storage.daycast.plan.sync","confirmed":true}));
 }
 
 #[test]
@@ -547,7 +550,7 @@ fn travel_resume_an_unanswered_question_does_not_request_more_questions() {
         pause_trip(); resume_trip()
         let before = pending.len()
         send_trip_text("上午九点")
-        pending[0].callback({is_ok:true data:{events:[]}})
+        pending[0].callback({is_ok:true data:{events:[] system_events:[]}})
         {before:before calls:pending.len() state:trip_state last:pending[1].args.input.conversation_history[0].content}.to_json()
     "#);
     assert_eq!(result, json!({"before":0,"calls":2,"state":"thinking","last":"上午九点"}));
@@ -574,14 +577,15 @@ fn travel_relaunch_preserves_draft_and_never_restarts_external_work() {
 fn travel_validation_failure_preserves_previous_draft_and_new_constraints() {
     let result = trip_run(r#"
         trip_state = "thinking"; trip_generation = 2; trip_draft = {title:"原计划"}
-        accept_trip_model({is_ok:true data:{output:{ready:true understanding:"改为10点" plan:{} answer:"新安排"}}}, 2, {})
-        pending[0].callback({is_ok:false error:"与已有日程冲突"})
+        accept_trip_model({is_ok:true data:{output:{evidence:[] ready:true understanding:"改为10点" plan:{} answer:"新安排"}}}, 2, {})
+        pending[0].callback({is_ok:true data:checked})
+        pending[1].callback({is_ok:false error:"与已有日程冲突"})
         {state:trip_state title:trip_draft.title memory:trip_memory calls:pending.len() status:trip_status}.to_json()
     "#);
     assert_eq!(result["state"], "error");
     assert_eq!(result["title"], "原计划");
     assert_eq!(result["memory"], "改为10点");
-    assert_eq!(result["calls"], 1);
+    assert_eq!(result["calls"], 2);
     assert!(result["status"].as_str().unwrap().contains("冲突"));
 }
 
@@ -594,4 +598,27 @@ fn travel_repeated_question_stops_instead_of_looping() {
         {state:trip_state calls:pending.len() messages:trip_messages.len()}.to_json()
     "#);
     assert_eq!(result, json!({"state":"error","calls":0,"messages":2}));
+}
+
+#[test]
+fn travel_vague_request_and_overconfident_model_still_ask_date() {
+    let r=trip_run(r#"
+        trip_state="thinking";trip_generation=8;trip_brief="我想随便找一个周末去北京"
+        trip_weather.destination="北京"
+        accept_trip_model({is_ok:true data:{output:{evidence:[{key:"destination" value:"北京" quote:"去北京"}] ready:true understanding:"北京" plan:{} answer:"我已经有把握"}}},8,{})
+        pending[0].callback({is_ok:true data:{ready:false known:[{key:"destination" value:"北京"}] missing:[{key:"dates" label:"日期"}] question_key:"dates" question:"请先选一个周末" choices:["2026-10-17 至 2026-10-18"]}})
+        {state:trip_state draft:trip_draft question:trip_question calls:pending.len() message:trip_messages[0].content}.to_json()
+    "#);
+    assert_eq!(r["state"],"asking");assert!(r["draft"].is_null());assert_eq!(r["calls"],1);assert!(!r["message"].as_str().unwrap().contains("有把握"));
+}
+#[test]
+fn travel_choice_is_confirmed_outside_model_and_text_pause_stops_work() {
+    let r=trip_run(r#"
+        trip_state="asking";trip_question_key="dates";trip_brief="北京"
+        send_trip_text("2026-10-17 至 2026-10-18")
+        send_trip_text("暂停")
+        pending[0].callback({is_ok:true data:{events:[] system_events:[]}})
+        {state:trip_state answers:trip_answers calls:pending.len()}.to_json()
+    "#);
+    assert_eq!(r["state"],"paused");assert_eq!(r["answers"][0]["key"],"dates");assert_eq!(r["calls"],1);
 }
