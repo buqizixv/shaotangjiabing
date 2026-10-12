@@ -1,5 +1,7 @@
 # Daycast 宿主接入代码
 
+地区搜索新增 `host-service/src/qweather.rs`，通过 `storage.daycast.places.search` 提供城市、区县和景点查询。宿主需重新编译；仅更新 bundle 不能启用服务。见 [QWEATHER.md](QWEATHER.md)。旧的 `octosense-daycast.patch` 保留原宿主接入基线，应用该补丁后须将本目录最新版 `host-service/` 同步到宿主 `apps/weather-assistant/host-service/`。
+
 这里归档本次 UI 已运行版本所使用的宿主接入，避免将整个 OctoSense 仓库放进应用仓库。
 
 - `host-service/`：日程持久化与校验、日程代理工具声明，以及 Rinx 桥接入口；依赖由 OctoSense 根 workspace 提供。
