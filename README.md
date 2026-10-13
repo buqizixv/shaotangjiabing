@@ -229,6 +229,42 @@ Daycast 对应 OctoSense 场景中的天气与活动规划：从自然语言任�
 
 项目图片按画面内容命名；图标、App Hub 截图和说明文档截图的完整清单见 [图片索引](docs/product-guide/assets/图片索引.md)。
 
+## 贡献
+
+在开发和联调 Daycast 的过程中，GitHub 账号 [buqizixv](https://github.com/buqizixv) 向 OctoSense 生态提交了以下问题反馈、接口改进请求和应用投稿，涵盖 Windows 渲染与依赖交付、应用托管、模型状态协议及发布流程。
+
+截至 **2026-10-13**，共 **15 条 Issue：14 条开放，1 条已完成关闭**。状态以原 Issue 的最新记录为准。
+
+### OctoSense：桌面体验与宿主集成
+
+| Issue | 问题或请求 | 当前状态 |
+| --- | --- | --- |
+| [#530](https://github.com/OctoSense-org/OctoSense/issues/530) | 请求 Windows 摄像头预览/拍摄支持，以及可发现的运行时能力状态。 | 开放 |
+| [#527](https://github.com/OctoSense-org/OctoSense/issues/527) | 反馈 Splash 页面初次打开时部分文字缺失、等待后恢复的偶发现象。 | 开放 |
+| [#526](https://github.com/OctoSense-org/OctoSense/issues/526) | 反馈本地 release 启动缺少 WebView2Loader.dll，并请求核查依赖交付流程。 | 开放 |
+| [#525](https://github.com/OctoSense-org/OctoSense/issues/525) | 反馈 Windows Dock 中部分应用只显示空白底板、SVG 图标内容不可见。 | 开放 |
+| [#338](https://github.com/OctoSense-org/OctoSense/issues/338) | 请求补足 peer/prepare 的模型状态信息，区分已连接与没有可用模型。 | 开放 |
+| [#337](https://github.com/OctoSense-org/OctoSense/issues/337) | 反馈 Bundle 图标路径、摘要计算及应用更新流程容易出现静默失败。 | 开放 |
+| [#336](https://github.com/OctoSense-org/OctoSense/issues/336) | 反馈 ContextOp::Turn 将内部提示词混入用户可见的对话记录。 | 开放 |
+| [#335](https://github.com/OctoSense-org/OctoSense/issues/335) | 反馈文档中的 apps.splash 配置未被读取，应用托管静默降级为进程。 | 开放 |
+| [#286](https://github.com/OctoSense-org/OctoSense/issues/286) | 反馈进程托管应用无法通过 shell broker 获取 Octos 服务。 | 开放 |
+| [#285](https://github.com/OctoSense-org/OctoSense/issues/285) | 反馈桌面内核发现逻辑忽略 core/bin 位置。 | 开放 |
+| [#136](https://github.com/OctoSense-org/OctoSense/issues/136) | 反馈 AppModule::create 的上下文调用要求缺少说明，panic 难以定位。 | 开放 |
+| [#135](https://github.com/OctoSense-org/OctoSense/issues/135) | 反馈 AI bus 服务 ID 与模块 ID 的连字符规则不一致，验证错误不明确。 | 开放 |
+| [#134](https://github.com/OctoSense-org/OctoSense/issues/134) | 反馈 --module 参数未打开指定模块，实际表现与文档不一致。 | 开放 |
+
+### Octos：模型状态协议
+
+| Issue | 问题或请求 | 当前状态 |
+| --- | --- | --- |
+| [#2674](https://github.com/octos-org/octos/issues/2674) | 请求 peer/prepare 返回可安全展示的模型名称。 | 已完成关闭；关联 [PR #2711](https://github.com/octos-org/octos/pull/2711) |
+
+### App Hub：应用投稿
+
+| Issue | 问题或请求 | 当前状态 |
+| --- | --- | --- |
+| [#111](https://github.com/OctoSense-org/OctoSense-App-Hub/issues/111) | 提交 Daycast / weather-assistant 0.4.3 到 App Hub，已有初步评审回复。 | 开放；已有评审反馈 |
+
 ## 运行与检查
 
 Daycast 使用 OctoScript 编写，主要源码是 [`bundle/main.splash`](bundle/main.splash)。在已准备 OctoScript-App-Design-Flow 与 OctoSense App Hub 工具的环境中，可运行：
