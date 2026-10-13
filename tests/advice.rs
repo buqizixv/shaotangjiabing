@@ -9,6 +9,7 @@ let fs = {write: fn(path, data){}}
 let widget = {render: fn(){}}
 let ui = {content: widget}
 fn round(value){ value }
+fn min(a, b){ if a < b {a} else {b} }
 let control = {set_text: fn(value){} set_visible: fn(value){}}
 ui.schedule_mode_button = control
 ui.clothing_mode_button = control
@@ -55,6 +56,85 @@ fn complete_weather_page_parses() {
     parser.set_emit_errors(false);
     parser.parse(&tokenizer, "weather_assistant.splash", (0, 0), &[]);
     assert!(!parser.had_error, "{:?}", parser.diagnostics());
+}
+
+#[test]
+fn ordinary_chat_clothing_followup_stages_a_confirmable_card() {
+    let result = run(r#"
+        let entered = "帮我记一件衣服"
+        ui.question = {text: fn(){entered} set_text: fn(value){entered = value}}
+        send_weather_question()
+        pending[0].callback({is_ok: true data: {output: {answer: "请补充衣物和位置" propose_event: false propose_reschedule: false propose_action: false}}})
+        entered = "啊是一件厚棉袄，放在卧室床头"
+        send_weather_question()
+        let history = pending[1].args.input.conversation_history
+        pending[1].callback({is_ok: true data: {output: {answer: "请确认衣橱草案" propose_event: false propose_reschedule: false propose_action: true action_kind: "add_clothing" action_value: "厚棉袄" action_location: "卧室床头"}}})
+        let draft = pending_action
+        let before = wardrobe.len()
+        let saved = chat_sessions[0].action
+        confirm_ai_action()
+        {history: history draft: draft saved: saved before: before clothes: wardrobe locations: wardrobe_locations pending: pending_action archived: chat_sessions[0].action}.to_json()
+    "#);
+    assert_eq!(result["history"].as_array().unwrap().len(), 2);
+    assert_eq!(result["draft"]["value"], "厚棉袄");
+    assert_eq!(result["draft"]["location"], "卧室床头");
+    assert_eq!(result["saved"], result["draft"]);
+    assert_eq!(result["before"], 0);
+    assert_eq!(result["clothes"], json!(["厚棉袄"]));
+    assert_eq!(result["locations"], json!(["卧室床头"]));
+    assert!(result["pending"].is_null() && result["archived"].is_null());
+}
+
+#[test]
+fn conversations_isolate_context_drafts_and_late_replies_and_reload() {
+    let result = run(r#"
+        page = "qa"
+        let entered = "第一段对话"
+        ui.question = {text: fn(){entered} set_text: fn(value){entered = value}}
+        send_weather_question()
+        let old_callback = pending[0].callback
+        pending_action = {kind: "add_clothing" value: "外套" location: "卧室"}
+        entered = "尚未发送"
+        new_chat()
+        let clean = {messages: chat_messages.len() action: pending_action context: conversation_context()}
+        old_callback({is_ok: true data: {output: {answer: "旧回答" propose_event: false propose_reschedule: false propose_action: false}}})
+        let late = chat_messages.len()
+        entered = "第二段对话"
+        send_weather_question()
+        let isolated = pending[1].args.input.conversation_history
+        open_chat(1)
+        let restored = {messages: chat_messages input: chat_input action: pending_action}
+        let persisted = ""
+        fs.write = fn(path, data){ if path == "conversations.json" {persisted = data} }
+        save_chat()
+        chat_sessions = []; chat_messages = []; pending_action = nil
+        fs.exists = fn(path){path == "conversations.json"}
+        fs.read = fn(path){persisted}
+        load_chat()
+        {clean: clean late: late isolated: isolated restored: restored reloaded: chat_messages input: chat_input action: pending_action sessions: chat_sessions.len() next: chat_next_id}.to_json()
+    "#);
+    assert_eq!(result["clean"]["messages"], 0);
+    assert!(result["clean"]["action"].is_null());
+    assert_eq!(result["late"], 0);
+    assert_eq!(result["isolated"], json!([]));
+    assert_eq!(result["restored"]["input"], "尚未发送");
+    assert_eq!(result["input"], "尚未发送");
+    assert_eq!(result["reloaded"], result["restored"]["messages"]);
+    assert_eq!(result["action"]["value"], "外套");
+    assert_eq!(result["sessions"], 2);
+    assert_eq!(result["next"], 3);
+}
+
+#[test]
+fn chat_actions_reject_unknown_kinds_and_wrong_explicit_modes() {
+    let result = run(r#"
+        qa_generation = 7
+        stage_ai_action("delete_clothing", "外套", "", 7, "chat")
+        let unknown = pending_action
+        stage_ai_action("add_clothing", "外套", "", 7, "create_preference")
+        {unknown: unknown wrong: pending_action}.to_json()
+    "#);
+    assert!(result["unknown"].is_null() && result["wrong"].is_null());
 }
 
 #[test]
@@ -284,6 +364,26 @@ fn rinx_send_waits_for_actual_success_and_failure_can_retry() {
 }
 
 #[test]
+fn today_reminder_shows_rinx_setup_and_send_status() {
+    let result = run(r#"
+        family_alerts = [{id: "manual/1" city: "首页提醒" text: "家人城市天气异常" state: "manual" error: ""}]
+        confirm_task("fam:manual/1")
+        let setup_status = app_status
+        rinx_room = "!home:matrix.rinx.chat"
+        confirm_task("fam:manual/1")
+        let waiting_status = app_status
+        let waiting_state = family_alerts[0].state
+        pending[0].callback({is_ok: true data: {}})
+        {setup_status: setup_status waiting_status: waiting_status waiting_state: waiting_state sent_status: app_status state: family_alerts[0].state}.to_json()
+    "#);
+    assert!(result["setup_status"].as_str().unwrap().contains("选择 Rinx 家人聊天室"));
+    assert!(result["waiting_status"].as_str().unwrap().contains("等待你确认"));
+    assert_eq!(result["waiting_state"], "sending");
+    assert!(result["sent_status"].as_str().unwrap().contains("发送成功"));
+    assert_eq!(result["state"], "sent");
+}
+
+#[test]
 fn rinx_enabled_changes_queue_behind_one_confirmation() {
     let result = run(r#"
         rinx_on = true
@@ -430,7 +530,7 @@ fn ordinary_chat_stages_a_schedule_draft_without_saving_it() {
         pending[0].callback({is_ok: true data: {output: {
             answer: "已为你生成洗澡草案，请确认。" propose_event: true
             event_title: "洗澡" event_start: "2026-10-10T23:30" event_end: "2026-10-11T00:00" event_reason: "按你指定的时间，尚未添加。"
-            propose_action: false action_kind: "" action_value: "" action_location: ""
+            propose_action: false action_kind: "" action_value: "" action_location: "" propose_reschedule: false reschedule_id: "" reschedule_start: "" reschedule_end: "" reschedule_reason: ""
         }}})
         {mode: pending[0].args.input.intent_mode draft: pending_event saved: schedule.len() calls: pending.len()}.to_json()
     "#);
@@ -470,7 +570,7 @@ fn conflicting_chat_draft_stays_visible_for_time_correction() {
         handle_weather_question({is_ok: true data: {output: {
             answer: "洗澡时间与吃饭重叠，请调整时间。" propose_event: true
             event_title: "洗澡" event_start: "2026-10-10T23:30" event_end: "2026-10-11T00:00" event_reason: "与出去吃饭重叠，请修改时间。"
-            propose_action: false action_kind: "" action_value: "" action_location: ""
+            propose_action: false action_kind: "" action_value: "" action_location: "" propose_reschedule: false reschedule_id: "" reschedule_start: "" reschedule_end: "" reschedule_reason: ""
         }}}, qa_generation, "chat")
         confirm_ai_event()
         {draft: pending_event saved: schedule.len() calls: pending.len() status: app_status}.to_json()
@@ -507,12 +607,12 @@ fn a_late_model_reply_cannot_replace_the_latest_schedule_draft() {
         pending[1].callback({is_ok: true data: {output: {
             answer: "洗澡草案，请确认。" propose_event: true
             event_title: "洗澡" event_start: "2026-10-10T23:30" event_end: "2026-10-11T00:00" event_reason: "洗澡30分钟"
-            propose_action: false action_kind: "" action_value: "" action_location: ""
+            propose_action: false action_kind: "" action_value: "" action_location: "" propose_reschedule: false reschedule_id: "" reschedule_start: "" reschedule_end: "" reschedule_reason: ""
         }}})
         pending[0].callback({is_ok: true data: {output: {
             answer: "吃饭草案，请确认。" propose_event: true
             event_title: "吃饭" event_start: "2026-10-10T23:00" event_end: "2026-10-11T00:00" event_reason: "旧回复"
-            propose_action: false action_kind: "" action_value: "" action_location: ""
+            propose_action: false action_kind: "" action_value: "" action_location: "" propose_reschedule: false reschedule_id: "" reschedule_start: "" reschedule_end: "" reschedule_reason: ""
         }}})
         {draft: pending_event messages: chat_messages.len() saved: schedule.len()}.to_json()
     "#);

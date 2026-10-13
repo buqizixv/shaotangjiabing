@@ -32,6 +32,11 @@ let search_status = "输入城市名搜索"
 let search_generation = 0
 let app_status = ""
 let chat_messages = []
+let chat_sessions = []
+let chat_session_id = 1
+let chat_next_id = 2
+let chat_history_open = false
+let chat_input = ""
 let question_text = ""
 let advice_text = ""
 let advice_generation = 0
@@ -124,25 +129,33 @@ fn family_alert_state(id, state, error){
     render_active_content()
 }
 fn send_family_alert(id){
-    if rinx_sending { return }
-    if rinx_room == "" { rinx_status = "请先选择 Rinx 家人聊天室。"; render_active_content(); return }
+    if rinx_sending { app_status = "已有一条提醒正在等待 Rinx 处理，请先完成 Rinx 确认。"; render_active_content(); return }
+    if rinx_room == "" {
+        rinx_status = "请先选择 Rinx 家人聊天室。"
+        app_status = "请先到「我的」选择 Rinx 家人聊天室，再确认发送提醒。"
+        render_active_content()
+        return
+    }
     let alert = nil
     for row in family_alerts { if row.id == id && row.state != "sent" { alert = row } }
-    if alert == nil { return }
+    if alert == nil { app_status = "这条提醒已处理或不存在。"; render_active_content(); return }
     rinx_sending = true
     let room = rinx_room
     family_alert_state(id, "sending", "")
     rinx_status = "等待 Rinx 确认；请在 Rinx 查看聊天室和正文。"
+    app_status = "已交给 Rinx，正在等待你确认聊天室和消息正文…"
     host.request("storage.daycast.rinx.send", {room: room, text: alert.text}, fn(r){
         rinx_sending = false
         if r.is_ok {
             family_alert_state(id, "sent", "")
             rinx_status = "Rinx 已确认消息发送成功。"
+            app_status = "Rinx 已确认，提醒发送成功。"
             if rinx_on { send_next_family_alert() }
         } else {
             let error = if r.error == nil {"Rinx 未确认发送成功"} else {r.error}
             family_alert_state(id, "error", error)
             rinx_status = "发送未获确认：" + error + "。重试前请在 Rinx 检查消息。"
+            app_status = "Rinx 未确认发送：" + error + "。请到「我的」查看或重试。"
         }
         render_active_content()
     })
@@ -216,6 +229,7 @@ fn poll_family_weather(){
 }
 
 fn save_data(){
+    save_chat()
     fs.write("weather.json", {current_city: current_city, cities: cities, preferences: preferences, family_cities: family_cities, rinx_room: rinx_room, rinx_room_name: rinx_room_name, rinx_on: rinx_on, family_weather: family_weather, family_alerts: family_alerts, wardrobe: wardrobe, wardrobe_locations: wardrobe_locations, wardrobe_photos: wardrobe_photos, reminders_on: reminders_on, current_weather: current_weather}.to_json())
 }
 fn load_data(){
@@ -280,6 +294,7 @@ fn update_schedule_mode_ui(){
 fn select_qa_mode(mode){
     if qa_action_mode == mode { qa_action_mode = "" } else { qa_action_mode = mode }
     create_schedule_mode = qa_action_mode == "create_schedule"
+    save_chat()
     update_schedule_mode_ui()
 }
 fn render_active_content(){
@@ -738,6 +753,7 @@ fn confirm_ai_event(){
     }
     host.request("storage.daycast.schedule.add", {title: event.title start: event.start end: event.end}, fn(r){
         pending_event = nil
+        save_chat()
         if !r.is_ok { app_status = r.error; render_active_content(); return }
         schedule.push(r.data.event)
         app_status = "已按你的确认添加到日程表"
@@ -746,7 +762,7 @@ fn confirm_ai_event(){
         render_active_content()
     })
 }
-fn dismiss_ai_event(){ pending_event = nil; render_active_content() }
+fn dismiss_ai_event(){ pending_event = nil; save_chat(); render_active_content() }
 fn ai_action_text(){
     if pending_action == nil { return "" }
     if pending_action.kind == "add_clothing" {
@@ -768,10 +784,13 @@ fn handle_family_city_geocode(result, ticket, query){
     }
     pending_action = {kind: "add_family_city", city: data.results[0]}
     app_status = "已找到城市，请核对后确认添加"
+    save_chat()
     render_active_content()
 }
 fn stage_ai_action(kind, value, location, ticket, expected_mode){
-    if ticket != qa_generation || kind != expected_mode { return }
+    if ticket != qa_generation { return }
+    if kind != "add_clothing" && kind != "create_preference" && kind != "add_family_city" { return }
+    if expected_mode != "chat" && kind != expected_mode { return }
     value = value.trim()
     location = location.trim()
     if value == "" { app_status = "AI 没能识别要添加的内容，请补充后再试"; render_active_content(); return }
@@ -783,6 +802,7 @@ fn stage_ai_action(kind, value, location, ticket, expected_mode){
     }
     pending_action = {kind: kind, value: value, location: location}
     app_status = "请核对下方内容，确认后会写入你的资料"
+    save_chat()
     render_active_content()
 }
 fn confirm_ai_action(){
@@ -812,7 +832,7 @@ fn confirm_ai_action(){
     request_outing_advice()
     render_active_content()
 }
-fn dismiss_ai_action(){ pending_action = nil; app_status = "已取消，没有修改资料"; render_active_content() }
+fn dismiss_ai_action(){ pending_action = nil; app_status = "已取消，没有修改资料"; save_chat(); render_active_content() }
 fn schedule_context(){
     let rows = []
     for event in schedule { rows.push({id: event.id title: event.title start: event.start end: event.end}) }
@@ -828,6 +848,61 @@ fn conversation_context(){
         }
     }
     rows
+}
+fn save_chat(){
+    let title = "新对话"
+    for message in chat_messages { if title == "新对话" && message.speaker == "我" { title = message.text } }
+    let snapshot = {id: chat_session_id title: title messages: chat_messages input: chat_input action_mode: qa_action_mode event: pending_event action: pending_action reschedule: pending_reschedule}.to_json().parse_json()
+    let rows = [snapshot]
+    for session in chat_sessions { if session.id != chat_session_id { rows.push(session) } }
+    chat_sessions = rows
+    fs.write("conversations.json", {version: 1 active: chat_session_id next_id: chat_next_id sessions: chat_sessions}.to_json())
+}
+fn restore_chat(session){
+    qa_generation = qa_generation + 1
+    chat_session_id = session.id
+    chat_messages = session.messages.to_json().parse_json()
+    chat_input = session.input
+    qa_action_mode = session.action_mode
+    create_schedule_mode = qa_action_mode == "create_schedule"
+    pending_event = session.event
+    pending_action = session.action
+    pending_reschedule = session.reschedule
+    app_status = ""
+    chat_history_open = false
+}
+fn load_chat(){
+    if !fs.exists("conversations.json") { return }
+    let stored = fs.read("conversations.json").parse_json()
+    if stored == nil || stored.version != 1 { return }
+    chat_sessions = stored.sessions
+    chat_next_id = stored.next_id
+    for session in chat_sessions { if session.id == stored.active { restore_chat(session) } }
+}
+fn remember_chat_input(){
+    if page == "qa" { chat_input = ui.question.text() }
+    save_chat()
+}
+fn new_chat(){
+    remember_chat_input()
+    qa_generation = qa_generation + 1
+    chat_session_id = chat_next_id
+    chat_next_id = chat_next_id + 1
+    chat_messages = []; chat_input = ""; question_text = ""
+    pending_event = nil; pending_action = nil; pending_reschedule = nil
+    qa_action_mode = ""; create_schedule_mode = false
+    app_status = ""; chat_history_open = false
+    save_chat()
+    render_active_content()
+}
+fn open_chat(id){
+    remember_chat_input()
+    for session in chat_sessions { if session.id == id { restore_chat(session); save_chat(); render_active_content(); return } }
+}
+fn toggle_chat_history(){
+    remember_chat_input()
+    chat_history_open = !chat_history_open
+    render_active_content()
 }
 fn hourly_context(){
     let rows = []
@@ -889,6 +964,7 @@ fn handle_weather_question(result, ticket, action_mode){
         pending_reschedule = nil
         app_status = ""
     }
+    save_chat()
     render_active_content()
 }
 fn ask_prompt(text){
@@ -914,11 +990,14 @@ fn send_weather_question(){
     pending_action = nil
     question_text = ""
     ui.question.set_text("")
+    chat_input = ""
+    save_chat()
     app_status = "Daycast 正在结合天气和你的安排思考…"
     render_active_content()
     let task = "你是 Daycast 的天气、衣橱和日程顾问。结合用户问题、天气、衣橱、偏好、家庭城市和已有日程回答。只使用提供的数据，不虚构天气。weather_date 是今天的本地日期，请据此换算明天等相对日期。用户询问活动时间，或明确表达想做某活动时，查看日程找不冲突的合适时段；天气适合度只根据给出的逐小时预报判断，预报覆盖不到的日期不要声称天气合适。可以提出一个待确认的日程草案，但绝不能声称已添加，也不能自行添加。只有确实适合提出具体时间时 propose_event=true，event_start 和 event_end 必须严格使用 YYYY-MM-DDTHH:mm，例如 2026-10-05T08:00；只能返回年月日和 24 小时制时分，不得使用‘明天’、空格分隔、秒或时区。活动时长优先按用户描述推断，没说时按 1 小时。没有明确活动意图时 propose_event=false。普通问答中，单纯说‘提醒我’或询问闹铃时不要创建日程草案；说明 Daycast 可通过创建日程模式添加事项，不要让用户去设置闹铃。"
     task = task + " 对话连续性：conversation_history 是此前的用户与助理对话，question 是最新一句；previous_draft 是当前尚未保存的草案，existing_schedule 才是已保存日程。‘那就生成草案吧’、‘帮我安排’、‘换个时间’等承接语必须结合前文最近的活动和时间理解；前文已说明洗澡等活动时，不得再次询问要安排什么，不得把旧草案说成已保存。日程草案输出规则：用户明确说出要做的活动与时间，或承接前文要求生成草案，且可确定标题和时间时，普通聊天也必须返回 propose_event=true，并填写 event_title、event_start、event_end、event_reason，让应用显示可确认的草案卡；不要只口头说‘可以生成’、‘已拟草案’，也不要引导用户重复使用创建日程模式。指定时间有冲突仍可生成该时间的待调整草案，并说明冲突；没有用户同意不得擅自改动用户指定时间或已保存日程。用户明确接受前文推荐时间时才采用推荐时间。仅在前文和本句合起来仍缺少关键活动或时间时追问。任何草案都要等用户点击确认并添加，聊天中的‘生成草案’不等于授权保存。没有说明时长时，洗澡默认 30 分钟，并在草案理由中注明；其他活动默认 1 小时。"
     task = task + " 改期提议：用户询问已保存日程会不会被天气影响时，照常回答；若该日程时段内天气明显不利（参考降水概率≥50%、气温≥35°C 或 ≤0°C，并结合用户偏好收紧），且能在 hourly_forecast 覆盖范围内找到更合适时段，返回 propose_reschedule=true，reschedule_id 填 existing_schedule 中该日程的 id，reschedule_start 和 reschedule_end 严格使用 YYYY-MM-DDTHH:mm，reschedule_reason 简述原因。找不到合适时段或天气并无明显不利时 propose_reschedule=false。应用会展示待确认改期卡，绝不能声称已改期。"
+    task = task + " 普通聊天也支持资料草案：结合 conversation_history，用户明确要求记录衣物、创建偏好或添加家人城市时，必须返回 propose_action=true，action_kind 只能是 add_clothing、create_preference 或 add_family_city，action_value 为用户明确提供的衣物/偏好/城市，action_location 为明确提供的存放位置或空字符串。补充消息必须承接前文的记录请求；衣物类型仍不明确则追问。不要只在 answer 中说已经整理草案；只有返回结构化字段，应用才会显示确认卡。未点击确认绝不能声称已保存。闲聊天气和穿搭建议不创建资料草案。"
     if schedule_intent { task = task + " 本条消息处于用户明确开启的‘创建日程’模式：将用户消息理解为要在 Daycast 日程表中创建事项，而不是设置闹铃。即使用户说‘提醒我’，也请提取活动标题和具体日期时间，结合现有日程检查冲突；信息足够时必须返回 propose_event=true 和严格格式的时间，信息不足时在 answer 中询问缺少的日期或时间并返回 propose_event=false。未获得用户点击确认前，不能声称日程已添加。没有说明活动时长时，请按 15 分钟安排短暂事项（如吃药），洗澡按 30 分钟，其他事项按 1 小时安排。" }
     if action_mode == "add_clothing" { task = task + " 本条消息处于添加衣物模式：只提取用户明确提到的一类衣物，可选提取明确说出的存放位置，不得推断或编造衣物、位置或照片。若衣物类型不清楚，在 answer 中追问并设 propose_action=false；明确时 propose_action=true、action_kind='add_clothing'、action_value 为衣物类型、action_location 为位置或空字符串。仅生成待确认内容，不要声称已保存。" }
     if action_mode == "create_preference" { task = task + " 本条消息处于创建天气偏好模式：提取一条用户明确表达的长期天气/体感偏好，保留简洁原意；若不是偏好或意思不清楚就追问并设 propose_action=false。明确时 propose_action=true、action_kind='create_preference'、action_value 为偏好文字、action_location 为空字符串。仅生成待确认内容，不要声称已保存。" }
@@ -1446,6 +1525,25 @@ fn confirm_task(key){
     let task = find_task(key)
     if task == nil { return }
     if task.kind == "family" { send_family_alert(task.alert_id) return }
+    if task.kind == "demo" && task.key == "demo:family" {
+        if rinx_sending { app_status = "已有一条提醒正在等待 Rinx 处理，请先完成 Rinx 确认。"; render_active_content(); return }
+        if rinx_room == "" {
+            rinx_status = "请先在「我的」中选择 Rinx 家人聊天室。"
+            app_status = "请先到「我的」选择 Rinx 家人聊天室，再确认发送提醒。"
+            render_active_content()
+            return
+        }
+        let id = "manual/" + ("" + floor(time_now() * 1000))
+        let text = task.title + "\n" + task.detail
+        let recent = []
+        for i in family_alerts.len() { if i >= family_alerts.len() - 19 { recent.push(family_alerts[i]) } }
+        recent.push({id: id, city: "首页提醒", text: text, state: "ready", error: ""})
+        family_alerts = recent
+        dismissed_tasks.push(key)
+        save_data()
+        send_family_alert(id)
+        return
+    }
     if task.kind == "demo" || task.kind == "note" { dismiss_task(key) return }
     if task.kind == "clarify" {
         dismissed_tasks.push(task.key)
@@ -1461,9 +1559,10 @@ fn confirm_pending_reschedule(){
     if pending_reschedule == nil { return }
     let proposal = pending_reschedule
     pending_reschedule = nil
+    save_chat()
     reschedule_event(proposal.event, proposal.new_start, proposal.new_end)
 }
-fn dismiss_pending_reschedule(){ pending_reschedule = nil; render_active_content() }
+fn dismiss_pending_reschedule(){ pending_reschedule = nil; save_chat(); render_active_content() }
 fn weather_asset(code){
     if code == nil { return "unknown.svg" }
     if code == 0 { return "sunny.svg" }
@@ -2128,7 +2227,7 @@ SolidView{width: Fill height: Fill flow: Right draw_bg.color: pale
     sidebar := SolidView{width: 176 height: Fill flow: Down padding: Inset{left: 18 right: 18 top: 30 bottom: 24} spacing: 10 draw_bg.color: paper
         on_render: || {me.width = if compact_layout {64} else {176}; me.padding = Inset{left: if compact_layout {8} else {18} right: if compact_layout {8} else {18} top: 30 bottom: 24}}
         View{width: Fill height: Fit flow: Right spacing: 9 align: Align{y: 0.5}
-            Svg{width: 30 height: 30 animating: false draw_svg.svg: http_resource("{{assets}}/assets/daycast.svg")}
+            Image{width: 30 height: 30 fit: ImageFit.Smallest src: http_resource("{{assets}}/assets/daycast.png")}
             brand_title := Label{text: "Daycast" padding: 0 draw_text.color: ink draw_text.text_style: DaycastBold{font_size: 20}}
         }
         brand_tagline := Label{text: "天气，与你的每一天。" padding: Inset{top: 4 bottom: 26} draw_text.color: muted draw_text.text_style.font_size: 11}
@@ -2683,6 +2782,21 @@ qa_scroll := ScrollYView{width: Fill height: Fill flow: Down spacing: 20
             View{width: Fill height: Fit flow: Right align: Align{y: 0.5} spacing: 10
                 Label{width: Fill text: "和 Daycast 聊聊" padding: 0 draw_text.color: ink draw_text.text_style: DaycastBold{font_size: 28}}
             }
+            View{width: Fill height: Fit flow: Right spacing: 10
+                Action{text: "＋ 新建对话" on_click: || new_chat()}
+                Action{text: if chat_history_open {"收起历史"} else {"历史对话"} on_click: || toggle_chat_history()}
+            }
+            if chat_history_open {
+                Card{
+                    Heading{text: "历史对话" draw_text.text_style.font_size: 16}
+                    Caption{text: "仅保存在本机；打开后可继续聊天，草案仍需确认。"}
+                    ScrollYView{width: Fill height: 200 flow: Down spacing: 8
+                        for session in chat_sessions {
+                            Action{width: Fill height: Fit text: if session.id == chat_session_id {"当前 · " + session.title} else {session.title} on_click: || open_chat(session.id)}
+                        }
+                    }
+                }
+            }
             if app_status != "" { Label{width: Fill text: app_status padding: 0 draw_text.color: orange draw_text.text_style.font_size: 12} }
             View{width: Fill height: Fit flow: if wide_layout {Flow.Right} else {Flow.Down} spacing: 20
                 RoundedView{width: Fill{weight: 210 basis: 430 shrink: 1 min: if wide_layout {300} else {0}} height: Fit padding: 20 flow: Down spacing: 12 draw_bg.color: paper draw_bg.border_radius: 22.0
@@ -2750,7 +2864,7 @@ qa_scroll := ScrollYView{width: Fill height: Fill flow: Down spacing: 20
                         }
                     }
                     composer := RoundedView{width: Fill height: Fit flow: Right spacing: 10 align: Align{y: 0.5} padding: 10 draw_bg.color: pale draw_bg.border_radius: 14.0
-                        question := Field{width: Fill height: 44 empty_text: "和 Daycast 说说…" on_return: |text| send_weather_question()}
+                        question := Field{width: Fill height: 44 text: chat_input empty_text: "和 Daycast 说说…" on_change: |text| {chat_input = text; save_chat()} on_return: |text| send_weather_question()}
                         ButtonFlat{text: "↑" width: 40 height: 40 on_click: || send_weather_question() draw_bg +: {border_radius: 20.0 color: orange color_hover: #xc86a42 color_down: #xa54f2d border_size: 0.0} draw_text +: {color: light_ink color_hover: light_ink color_down: light_ink text_style.font_size: 16}}
                     }
                 }
@@ -3147,4 +3261,4 @@ Heading{text: "再关注一座城市" }Small{text: "切换到家人的城市，�
 // Schedule startup only after the app view tree has been constructed. On a
 // cold launch, the old timer could fire while the dynamic content view was
 // still mounting, leaving the page blank until the user forced a redraw.
-start_timeout(0.05, || { ui.navigation.render(); render_active_content(); load_data(); load_trip(); poll_family_weather(); poll_task_suggestions() })
+start_timeout(0.05, || {load_chat(); ui.navigation.render(); render_active_content(); load_data(); load_trip(); poll_family_weather(); poll_task_suggestions() })

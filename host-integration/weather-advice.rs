@@ -9,6 +9,7 @@ let fs = {write: fn(path, data){}}
 let widget = {render: fn(){}}
 let ui = {content: widget}
 fn round(value){ value }
+fn min(a, b){ if a < b {a} else {b} }
 let control = {set_text: fn(value){} set_visible: fn(value){}}
 ui.schedule_mode_button = control
 ui.clothing_mode_button = control
@@ -55,6 +56,252 @@ fn complete_weather_page_parses() {
     parser.set_emit_errors(false);
     parser.parse(&tokenizer, "weather_assistant.splash", (0, 0), &[]);
     assert!(!parser.had_error, "{:?}", parser.diagnostics());
+}
+
+#[test]
+fn ordinary_chat_clothing_followup_stages_a_confirmable_card() {
+    let result = run(r#"
+        let entered = "帮我记一件衣服"
+        ui.question = {text: fn(){entered} set_text: fn(value){entered = value}}
+        send_weather_question()
+        pending[0].callback({is_ok: true data: {output: {answer: "请补充衣物和位置" propose_event: false propose_reschedule: false propose_action: false}}})
+        entered = "啊是一件厚棉袄，放在卧室床头"
+        send_weather_question()
+        let history = pending[1].args.input.conversation_history
+        pending[1].callback({is_ok: true data: {output: {answer: "请确认衣橱草案" propose_event: false propose_reschedule: false propose_action: true action_kind: "add_clothing" action_value: "厚棉袄" action_location: "卧室床头"}}})
+        let draft = pending_action
+        let before = wardrobe.len()
+        let saved = chat_sessions[0].action
+        confirm_ai_action()
+        {history: history draft: draft saved: saved before: before clothes: wardrobe locations: wardrobe_locations pending: pending_action archived: chat_sessions[0].action}.to_json()
+    "#);
+    assert_eq!(result["history"].as_array().unwrap().len(), 2);
+    assert_eq!(result["draft"]["value"], "厚棉袄");
+    assert_eq!(result["draft"]["location"], "卧室床头");
+    assert_eq!(result["saved"], result["draft"]);
+    assert_eq!(result["before"], 0);
+    assert_eq!(result["clothes"], json!(["厚棉袄"]));
+    assert_eq!(result["locations"], json!(["卧室床头"]));
+    assert!(result["pending"].is_null() && result["archived"].is_null());
+}
+
+#[test]
+fn conversations_isolate_context_drafts_and_late_replies_and_reload() {
+    let result = run(r#"
+        page = "qa"
+        let entered = "第一段对话"
+        ui.question = {text: fn(){entered} set_text: fn(value){entered = value}}
+        send_weather_question()
+        let old_callback = pending[0].callback
+        pending_action = {kind: "add_clothing" value: "外套" location: "卧室"}
+        entered = "尚未发送"
+        new_chat()
+        let clean = {messages: chat_messages.len() action: pending_action context: conversation_context()}
+        old_callback({is_ok: true data: {output: {answer: "旧回答" propose_event: false propose_reschedule: false propose_action: false}}})
+        let late = chat_messages.len()
+        entered = "第二段对话"
+        send_weather_question()
+        let isolated = pending[1].args.input.conversation_history
+        open_chat(1)
+        let restored = {messages: chat_messages input: chat_input action: pending_action}
+        let persisted = ""
+        fs.write = fn(path, data){ if path == "conversations.json" {persisted = data} }
+        save_chat()
+        chat_sessions = []; chat_messages = []; pending_action = nil
+        fs.exists = fn(path){path == "conversations.json"}
+        fs.read = fn(path){persisted}
+        load_chat()
+        {clean: clean late: late isolated: isolated restored: restored reloaded: chat_messages input: chat_input action: pending_action sessions: chat_sessions.len() next: chat_next_id}.to_json()
+    "#);
+    assert_eq!(result["clean"]["messages"], 0);
+    assert!(result["clean"]["action"].is_null());
+    assert_eq!(result["late"], 0);
+    assert_eq!(result["isolated"], json!([]));
+    assert_eq!(result["restored"]["input"], "尚未发送");
+    assert_eq!(result["input"], "尚未发送");
+    assert_eq!(result["reloaded"], result["restored"]["messages"]);
+    assert_eq!(result["action"]["value"], "外套");
+    assert_eq!(result["sessions"], 2);
+    assert_eq!(result["next"], 3);
+}
+
+#[test]
+fn chat_actions_reject_unknown_kinds_and_wrong_explicit_modes() {
+    let result = run(r#"
+        qa_generation = 7
+        stage_ai_action("delete_clothing", "外套", "", 7, "chat")
+        let unknown = pending_action
+        stage_ai_action("add_clothing", "外套", "", 7, "create_preference")
+        {unknown: unknown wrong: pending_action}.to_json()
+    "#);
+    assert!(result["unknown"].is_null() && result["wrong"].is_null());
+}
+
+#[test]
+fn places_search_queries_the_host_even_for_a_previously_local_city() {
+    let result = run(r#"
+        page = "search"
+        ui.city_query = {text: fn(){"太原市"}}
+        search_cities()
+        pending[0].callback({is_ok: true data: {results: [
+            {name: "太原" admin1: "山西省" admin2: "太原" country: "中国" latitude: 37.87 longitude: 112.55}
+            {name: "迎泽" admin1: "山西省" admin2: "太原" country: "中国" latitude: 37.86 longitude: 112.56}
+        ] warning: ""}})
+        {request: pending[0].method args: pending[0].args count: city_results.len() status: search_status}.to_json()
+    "#);
+    assert_eq!(result["request"], "storage.daycast.places.search");
+    assert_eq!(result["args"], json!({"query":"太原市","scenic":true}));
+    assert_eq!(result["count"], 2);
+    assert!(result["status"].as_str().unwrap().contains("和风天气"));
+}
+
+#[test]
+fn old_place_searches_cannot_overwrite_new_results_or_empty_input() {
+    let result = run(r#"
+        page = "search"
+        let entered = "北京"
+        ui.city_query = {text: fn(){entered}}
+        search_cities()
+        entered = "榆次区"
+        search_cities()
+        pending[1].callback({is_ok: true data: {results: [{name:"榆次"}] warning:""}})
+        pending[0].callback({is_ok: true data: {results: [{name:"北京"}] warning:""}})
+        let latest = city_results[0].name
+        entered = ""
+        search_cities()
+        pending[1].callback({is_ok: true data: {results: [{name:"榆次"}] warning:""}})
+        {latest:latest count:city_results.len() requests:pending.len()}.to_json()
+    "#);
+    assert_eq!(result["latest"], "榆次");
+    assert_eq!(result["count"], 0);
+    assert_eq!(result["requests"], 2);
+}
+
+#[test]
+fn family_city_lookup_uses_city_results_and_stages_confirmation() {
+    let result = run(r#"
+        qa_generation = 7
+        stage_ai_action("add_family_city", "榆次区", "", 7, "add_family_city")
+        pending[0].callback({is_ok:true data:{results:[{name:"榆次" admin1:"山西省" country:"中国" latitude:37.68 longitude:112.75}]}})
+        {request:pending[0].args draft:pending_action saved:family_cities.len()}.to_json()
+    "#);
+    assert_eq!(result["request"], json!({"query":"榆次区","scenic":false}));
+    assert_eq!(result["draft"]["city"]["name"], "榆次");
+    assert_eq!(result["saved"], 0);
+}
+
+#[test]
+fn agenda_keeps_indices_and_includes_overnight_events() {
+    let result = run(r#"
+        current_weather = {current: {time: "2026-10-10T10:30"} daily: {time: ["2026-10-10", "2026-10-11"]}}
+        schedule = [
+            {title: "跨夜" start: "2026-10-09T23:00" end: "2026-10-10T01:00"}
+            {title: "今天" start: "2026-10-10T10:00" end: "2026-10-10T11:00"}
+            {title: "未来" start: "2026-11-01T10:00" end: "2026-11-01T11:00"}
+        ]
+        {rows: events_on_date("2026-10-10") dates: schedule_dates()}.to_json()
+    "#);
+    assert_eq!(result["rows"][0]["index"], 0);
+    assert_eq!(result["rows"][1]["index"], 1);
+    assert_eq!(result["rows"].as_array().unwrap().len(), 2);
+    assert!(result["dates"].as_array().unwrap().contains(&json!("2026-11-01")));
+}
+
+#[test]
+fn forecast_handles_short_arrays_and_actual_sunrise_sunset() {
+    let result = run(r#"
+        current_weather = {current: {time: "2026-10-10T10:30"} daily: {
+            time: ["2026-10-10", "2026-10-11"] temperature_2m_min: [10, 11] temperature_2m_max: [22]
+            weather_code: [0] precipitation_probability_max: [] sunrise: ["2026-10-10T06:00"] sunset: ["2026-10-10T18:00"]
+        }}
+        let days = forecast_days()
+        {days: days before: forecast_night("2026-10-10T05:00") daytime: forecast_night("2026-10-10T12:00")
+        sunset: forecast_night("2026-10-10T18:00") missing: forecast_night("2026-10-11T22:00")
+        moon: hourly_weather_asset({night: true code: 0}) sunny: hourly_weather_asset({night: false code: 0})}.to_json()
+    "#);
+    assert_eq!(result["days"].as_array().unwrap().len(), 1);
+    assert!(result["days"][0]["rain"].is_null());
+    assert_eq!(result["before"], true);
+    assert_eq!(result["daytime"], false);
+    assert_eq!(result["sunset"], true);
+    assert_eq!(result["missing"], false);
+    assert_eq!(result["moon"], "compact-moon.svg");
+    assert_eq!(result["sunny"], "compact-sunny.svg");
+}
+
+#[test]
+fn split_schedule_form_preserves_host_contract_and_rejects_conflicts() {
+    let result = run(r#"
+        schedule_date = "2026-10-10"
+        schedule_title = "散步"
+        schedule_start = "16:30"
+        schedule_end = "17:15"
+        submit_schedule_form()
+        let args = pending[0].args
+        schedule = [{title: "会议" start: "2026-10-10T16:00" end: "2026-10-10T17:00"}]
+        submit_schedule_form()
+        let conflicts = pending.len()
+        let status = app_status
+        schedule_date = "2026-10-11"
+        submit_schedule_form()
+        {args: args requests: conflicts status: status revised: pending[1].args draft: schedule_start}.to_json()
+    "#);
+    assert_eq!(result["args"]["start"], "2026-10-10T16:30");
+    assert_eq!(result["args"]["end"], "2026-10-10T17:15");
+    assert_eq!(result["requests"], 1);
+    assert!(result["status"].as_str().unwrap().contains("重叠"));
+    assert_eq!(result["revised"]["start"], "2026-10-11T16:30");
+    assert_eq!(result["draft"], "16:30");
+}
+
+#[test]
+fn today_forecast_starts_after_current_time_and_handles_short_or_missing_arrays() {
+    let result = run(r#"
+        current_weather = {
+            current: {time: "2026-10-10T10:30"}
+            daily: {time: ["2026-10-10"]}
+            hourly: {
+                time: ["2026-10-10T09:00", "2026-10-10T10:00", "2026-10-10T11:00", "2026-10-10T12:00", "2026-10-10T13:00"]
+                temperature_2m: [10, 12, 15, 18, 20]
+                weather_code: [0, 0, 2]
+                precipitation_probability: [0, 0, 5]
+            }
+        }
+        let future = today_hourly()
+        let curve = [today_curve_y(future, 0), today_curve_y(future, 1)]
+        current_weather.current.time = "2026-10-10T14:00"
+        let exhausted = today_hourly()
+        current_weather = nil
+        {future: future curve: curve exhausted: exhausted empty: today_hourly()}.to_json()
+    "#);
+    assert_eq!(result["future"][0]["time"], "11:00");
+    assert_eq!(result["future"][1]["time"], "13:00");
+    assert!(result["future"][1]["code"].is_null());
+    assert!(result["future"][1]["rain"].is_null());
+    assert_eq!(result["curve"][0], 0.8);
+    assert!((result["curve"][1].as_f64().unwrap() - 0.2).abs() < 1e-6);
+    assert_eq!(result["exhausted"], json!([]));
+    assert_eq!(result["empty"], json!([]));
+}
+
+#[test]
+fn today_schedule_filters_date_and_family_weather_matches_coordinates() {
+    let result = run(r#"
+        current_weather = {current: {time: "2026-10-10T10:30"}}
+        schedule = [
+            {title: "昨天" start: "2026-10-09T10:00" end: "2026-10-09T11:00"}
+            {title: "今天" start: "2026-10-10T16:30" end: "2026-10-10T17:30"}
+            {title: "明天" start: "2026-10-11T10:00" end: "2026-10-11T11:00"}
+        ]
+        let city = {latitude: 40 longitude: 116}
+        family_weather = [{key: "40,116" temp: 18 time: "2026-10-10T10:00"}]
+        {events: today_events() date: today_date() family: family_current(city) missing: family_current({latitude: 31 longitude: 121})}.to_json()
+    "#);
+    assert_eq!(result["events"].as_array().unwrap().len(), 1);
+    assert_eq!(result["events"][0]["title"], "今天");
+    assert_eq!(result["date"], "2026-10-10");
+    assert_eq!(result["family"]["temp"], 18);
+    assert!(result["missing"].is_null());
 }
 
 #[test]
@@ -117,6 +364,26 @@ fn rinx_send_waits_for_actual_success_and_failure_can_retry() {
 }
 
 #[test]
+fn today_reminder_shows_rinx_setup_and_send_status() {
+    let result = run(r#"
+        family_alerts = [{id: "manual/1" city: "首页提醒" text: "家人城市天气异常" state: "manual" error: ""}]
+        confirm_task("fam:manual/1")
+        let setup_status = app_status
+        rinx_room = "!home:matrix.rinx.chat"
+        confirm_task("fam:manual/1")
+        let waiting_status = app_status
+        let waiting_state = family_alerts[0].state
+        pending[0].callback({is_ok: true data: {}})
+        {setup_status: setup_status waiting_status: waiting_status waiting_state: waiting_state sent_status: app_status state: family_alerts[0].state}.to_json()
+    "#);
+    assert!(result["setup_status"].as_str().unwrap().contains("选择 Rinx 家人聊天室"));
+    assert!(result["waiting_status"].as_str().unwrap().contains("等待你确认"));
+    assert_eq!(result["waiting_state"], "sending");
+    assert!(result["sent_status"].as_str().unwrap().contains("发送成功"));
+    assert_eq!(result["state"], "sent");
+}
+
+#[test]
 fn rinx_enabled_changes_queue_behind_one_confirmation() {
     let result = run(r#"
         rinx_on = true
@@ -174,6 +441,23 @@ fn legacy_storage_without_rinx_fields_remains_readable() {
         {room: rinx_room enabled: rinx_on weather: family_weather alerts: family_alerts}.to_json()
     "#);
     assert_eq!(result, json!({"room":"", "enabled":false, "weather":[], "alerts":[]}));
+}
+
+#[test]
+fn saved_weather_without_photo_or_legacy_schedule_fields_can_restart() {
+    let result = run(r#"
+        fs.exists = fn(path){true}
+        fs.read = fn(path){"{\"current_city\":{\"name\":\"北京\",\"latitude\":40,\"longitude\":116},\"cities\":[],\"preferences\":[],\"family_cities\":[],\"wardrobe\":[\"外套\"],\"wardrobe_locations\":[\"卧室\"],\"reminders_on\":true}"}
+        refresh_weather = fn(){}
+        load_data()
+        let written = ""
+        fs.write = fn(path, data){written = data}
+        save_data()
+        {photos: wardrobe_photos saved: written.parse_json()}.to_json()
+    "#);
+    assert_eq!(result["photos"], json!([""]));
+    assert_eq!(result["saved"]["wardrobe_photos"], json!([""]));
+    assert_eq!(result["saved"]["wardrobe_locations"], json!(["卧室"]));
 }
 
 #[test]
@@ -238,6 +522,106 @@ fn changed_preferences_discard_old_ai_reply() {
 }
 
 #[test]
+fn ordinary_chat_stages_a_schedule_draft_without_saving_it() {
+    let result = run(r#"
+        let entered = "我今天晚上11点半要洗澡"
+        ui.question = {text: fn(){entered} set_text: fn(value){entered = value}}
+        send_weather_question()
+        pending[0].callback({is_ok: true data: {output: {
+            answer: "已为你生成洗澡草案，请确认。" propose_event: true
+            event_title: "洗澡" event_start: "2026-10-10T23:30" event_end: "2026-10-11T00:00" event_reason: "按你指定的时间，尚未添加。"
+            propose_action: false action_kind: "" action_value: "" action_location: "" propose_reschedule: false reschedule_id: "" reschedule_start: "" reschedule_end: "" reschedule_reason: ""
+        }}})
+        {mode: pending[0].args.input.intent_mode draft: pending_event saved: schedule.len() calls: pending.len()}.to_json()
+    "#);
+    assert_eq!(result["mode"], "chat");
+    assert_eq!(result["draft"]["title"], "洗澡");
+    assert_eq!(result["draft"]["start"], "2026-10-10T23:30");
+    assert_eq!(result["saved"], 0);
+    assert_eq!(result["calls"], 1, "a model reply must not save the draft");
+}
+
+#[test]
+fn schedule_followup_receives_previous_conversation_and_reviewed_draft() {
+    let result = run(r#"
+        chat_messages = [
+            {speaker: "我" lane: "person" text: "我今天晚上11点半要洗澡"}
+            {speaker: "Daycast" lane: "person" text: "23:30与吃饭重叠，建议改到22:30。"}
+        ]
+        pending_event = {title: "洗澡" start: "2026-10-10T22:30" end: "2026-10-10T23:00" reason: "避开吃饭"}
+        let entered = "那你给我生成一个草案吧"
+        ui.question = {text: fn(){entered} set_text: fn(value){entered = value}}
+        send_weather_question()
+        pending[0].args.to_json()
+    "#);
+    Request::from_args(&result).unwrap();
+    assert_eq!(result["input"]["question"], "那你给我生成一个草案吧");
+    assert_eq!(result["input"]["conversation_history"], json!([
+        {"role":"user", "content":"我今天晚上11点半要洗澡"},
+        {"role":"assistant", "content":"23:30与吃饭重叠，建议改到22:30。"}
+    ]));
+    assert_eq!(result["input"]["previous_draft"]["title"], "洗澡");
+}
+
+#[test]
+fn conflicting_chat_draft_stays_visible_for_time_correction() {
+    let result = run(r#"
+        schedule = [{title: "出去吃饭" start: "2026-10-10T23:00" end: "2026-10-11T00:00"}]
+        handle_weather_question({is_ok: true data: {output: {
+            answer: "洗澡时间与吃饭重叠，请调整时间。" propose_event: true
+            event_title: "洗澡" event_start: "2026-10-10T23:30" event_end: "2026-10-11T00:00" event_reason: "与出去吃饭重叠，请修改时间。"
+            propose_action: false action_kind: "" action_value: "" action_location: "" propose_reschedule: false reschedule_id: "" reschedule_start: "" reschedule_end: "" reschedule_reason: ""
+        }}}, qa_generation, "chat")
+        confirm_ai_event()
+        {draft: pending_event saved: schedule.len() calls: pending.len() status: app_status}.to_json()
+    "#);
+    assert_eq!(result["draft"]["title"], "洗澡");
+    assert_eq!(result["saved"], 1);
+    assert_eq!(result["calls"], 0);
+    assert!(result["status"].as_str().unwrap().contains("冲突"));
+}
+
+#[test]
+fn conversation_context_bounds_history_and_keeps_speaker_roles() {
+    let result = run(r#"
+        for i in 9 {
+            chat_messages.push({speaker: "我" lane: "person" text: "用户 " + i})
+            chat_messages.push({speaker: "Daycast" lane: "person" text: "回答 " + i})
+        }
+        conversation_context().to_json()
+    "#);
+    let history = result.as_array().unwrap();
+    assert_eq!(history.len(), 12);
+    assert_eq!(history[0], json!({"role":"user", "content":"用户 3"}));
+    assert_eq!(history[11], json!({"role":"assistant", "content":"回答 8"}));
+}
+
+#[test]
+fn a_late_model_reply_cannot_replace_the_latest_schedule_draft() {
+    let result = run(r#"
+        let entered = "我今晚11点出去吃饭"
+        ui.question = {text: fn(){entered} set_text: fn(value){entered = value}}
+        send_weather_question()
+        entered = "我今晚11点半要洗澡"
+        send_weather_question()
+        pending[1].callback({is_ok: true data: {output: {
+            answer: "洗澡草案，请确认。" propose_event: true
+            event_title: "洗澡" event_start: "2026-10-10T23:30" event_end: "2026-10-11T00:00" event_reason: "洗澡30分钟"
+            propose_action: false action_kind: "" action_value: "" action_location: "" propose_reschedule: false reschedule_id: "" reschedule_start: "" reschedule_end: "" reschedule_reason: ""
+        }}})
+        pending[0].callback({is_ok: true data: {output: {
+            answer: "吃饭草案，请确认。" propose_event: true
+            event_title: "吃饭" event_start: "2026-10-10T23:00" event_end: "2026-10-11T00:00" event_reason: "旧回复"
+            propose_action: false action_kind: "" action_value: "" action_location: "" propose_reschedule: false reschedule_id: "" reschedule_start: "" reschedule_end: "" reschedule_reason: ""
+        }}})
+        {draft: pending_event messages: chat_messages.len() saved: schedule.len()}.to_json()
+    "#);
+    assert_eq!(result["draft"]["title"], "洗澡");
+    assert_eq!(result["messages"], 3);
+    assert_eq!(result["saved"], 0);
+}
+
+#[test]
 fn weather_question_clears_input_and_reports_model_error() {
     let result = run(r#"
         let entered = "hi"
@@ -251,4 +635,143 @@ fn weather_question_clears_input_and_reports_model_error() {
     assert_eq!(result["request"], "model.complete");
     assert_eq!(result["prompt"], "hi");
     assert_eq!(result["error"], "AI 暂时不可用，请检查 AI 设置后重试。");
+}
+
+const TRIP_ENV: &str = r#"
+fn time_now(){ 1800000000 }
+fn floor(value){value}
+fn local_time(){ {year:2026 month:10 day:11 hour:9 minute:5} }
+ui.trip_run_status = control
+let checked = {ready:true known:[] missing:[] weather:"已核实" calendar:"已盘点"}
+trip_weather = {destination:"太原" city:{name:"太原"} fetched_at:1800000000 data:{daily:{time:["2026-10-12"]}}}
+"#;
+fn trip_run(body: &str) -> Value { run(&format!("{TRIP_ENV}\n{body}")) }
+
+#[test]
+fn travel_model_schema_and_real_profile_context_are_valid() {
+    let result = trip_run(r#"
+        trip_state = "thinking"; trip_generation = 1; trip_brief = "明天去公园"
+        current_weather = {current:{temperature_2m:18} daily:{time:["2026-10-12"]} hourly:{time:["2026-10-12T09:00"] temperature_2m:[]}}
+        wardrobe = ["外套"]; wardrobe_locations = ["卧室"]; wardrobe_photos = [""]
+        preferences = ["怕冷"]; trip_memory = "公交往返，不吃辣"
+        call_trip_model(1)
+        pending[0].args.to_json()
+    "#);
+    Request::from_args(&result).unwrap();
+    let schema = Schema::compile(&result["schema"]).unwrap();
+    assert!(schema.validate(&json!({"ready":true})).is_err());
+    assert_eq!(result["class"], "strong");
+    assert_eq!(result["input"]["current_local_datetime"], "2026-10-11T09:05");
+    assert_eq!(result["input"]["forecast_dates"], json!(["2026-10-12"]));
+    assert_eq!(result["input"]["understood_constraints"], "公交往返，不吃辣");
+    assert_eq!(result["input"]["destination_forecast"]["city"]["name"], "太原");
+}
+
+#[test]
+fn travel_pause_ignores_late_model_and_host_validation_replies() {
+    let result = trip_run(r#"
+        trip_state = "thinking"; trip_generation = 7; trip_brief = "明天出行"
+        accept_trip_model({is_ok:true data:{output:{evidence:[] ready:true understanding:"公交" plan:{} answer:"已安排"}}}, 7, {})
+        pause_trip()
+        pending[0].callback({is_ok:true data:checked})
+        accept_trip_model({is_ok:true data:{output:{ready:false understanding:"覆盖" question:"去哪里？" choices:[] answer:"再问"}}}, 7, {})
+        {state:trip_state draft:trip_draft memory:trip_memory calls:pending.len() messages:trip_messages.len()}.to_json()
+    "#);
+    assert_eq!(result, json!({"state":"paused","draft":null,"memory":"公交","calls":1,"messages":0}));
+}
+
+#[test]
+fn travel_ready_stops_questions_and_never_writes_before_review() {
+    let result = trip_run(r#"
+        trip_state = "thinking"; trip_generation = 4; trip_brief = "公园半日"
+        trip_question = "几点出发？"
+        accept_trip_model({is_ok:true data:{output:{evidence:[] ready:true understanding:"9点" plan:{} answer:"信息足够，行程如下。"}}}, 4, {weather_city:"太原"})
+        pending[0].callback({is_ok:true data:checked})
+        pending[1].callback({is_ok:true data:{plan:{title:"公园半日" steps:[{title:"乘车"}]}}})
+        sync_trip()
+        let before = pending.len()
+        review_trip(); sync_trip(); sync_trip()
+        {state:trip_state question:trip_question before:before calls:pending.len() method:pending[2].method confirmed:pending[2].args.confirmed}.to_json()
+    "#);
+    assert_eq!(result, json!({"state":"syncing","question":"","before":2,"calls":3,"method":"storage.daycast.plan.sync","confirmed":true}));
+}
+
+#[test]
+fn travel_resume_an_unanswered_question_does_not_request_more_questions() {
+    let result = trip_run(r#"
+        trip_state = "asking"; trip_question = "几点出发？"; trip_brief = "明天公园"
+        pause_trip(); resume_trip()
+        let before = pending.len()
+        send_trip_text("上午九点")
+        pending[0].callback({is_ok:true data:{events:[] system_events:[]}})
+        {before:before calls:pending.len() state:trip_state last:pending[1].args.input.conversation_history[0].content}.to_json()
+    "#);
+    assert_eq!(result, json!({"before":0,"calls":2,"state":"thinking","last":"上午九点"}));
+}
+
+#[test]
+fn travel_relaunch_preserves_draft_and_never_restarts_external_work() {
+    let result = trip_run(r#"
+        let written = ""
+        fs.write = fn(path,data){written = data}
+        fs.exists = fn(path){true}
+        fs.read = fn(path){written}
+        trip_state = "thinking"; trip_draft = {title:"已完成的旧版"}; trip_brief = "新要求"; trip_memory = "步行不超过20分钟"
+        save_trip(); trip_draft = nil; trip_brief = ""; trip_memory = ""
+        load_trip()
+        let planning = trip_state
+        trip_state = "syncing"; save_trip(); load_trip()
+        {planning:planning syncing:trip_state calls:pending.len() title:trip_draft.title brief:trip_brief memory:trip_memory}.to_json()
+    "#);
+    assert_eq!(result, json!({"planning":"paused","syncing":"ready","calls":0,"title":"已完成的旧版","brief":"新要求","memory":"步行不超过20分钟"}));
+}
+
+#[test]
+fn travel_validation_failure_preserves_previous_draft_and_new_constraints() {
+    let result = trip_run(r#"
+        trip_state = "thinking"; trip_generation = 2; trip_draft = {title:"原计划"}
+        accept_trip_model({is_ok:true data:{output:{evidence:[] ready:true understanding:"改为10点" plan:{} answer:"新安排"}}}, 2, {})
+        pending[0].callback({is_ok:true data:checked})
+        pending[1].callback({is_ok:false error:"与已有日程冲突"})
+        {state:trip_state title:trip_draft.title memory:trip_memory calls:pending.len() status:trip_status}.to_json()
+    "#);
+    assert_eq!(result["state"], "error");
+    assert_eq!(result["title"], "原计划");
+    assert_eq!(result["memory"], "改为10点");
+    assert_eq!(result["calls"], 2);
+    assert!(result["status"].as_str().unwrap().contains("冲突"));
+}
+
+#[test]
+fn travel_repeated_question_stops_instead_of_looping() {
+    let result = trip_run(r#"
+        trip_state = "thinking"; trip_generation = 3; trip_question = "去哪？"
+        trip_messages = [{role:"assistant" content:"去哪？"} {role:"user" content:"公园"}]
+        accept_trip_model({is_ok:true data:{output:{ready:false understanding:"公园" question:"去哪？" choices:[] answer:"请补充"}}}, 3, {})
+        {state:trip_state calls:pending.len() messages:trip_messages.len()}.to_json()
+    "#);
+    assert_eq!(result, json!({"state":"error","calls":0,"messages":2}));
+}
+
+#[test]
+fn travel_vague_request_and_overconfident_model_still_ask_date() {
+    let r=trip_run(r#"
+        trip_state="thinking";trip_generation=8;trip_brief="我想随便找一个周末去北京"
+        trip_weather.destination="北京"
+        accept_trip_model({is_ok:true data:{output:{evidence:[{key:"destination" value:"北京" quote:"去北京"}] ready:true understanding:"北京" plan:{} answer:"我已经有把握"}}},8,{})
+        pending[0].callback({is_ok:true data:{ready:false known:[{key:"destination" value:"北京"}] missing:[{key:"dates" label:"日期"}] question_key:"dates" question:"请先选一个周末" choices:["2026-10-17 至 2026-10-18"]}})
+        {state:trip_state draft:trip_draft question:trip_question calls:pending.len() message:trip_messages[0].content}.to_json()
+    "#);
+    assert_eq!(r["state"],"asking");assert!(r["draft"].is_null());assert_eq!(r["calls"],1);assert!(!r["message"].as_str().unwrap().contains("有把握"));
+}
+#[test]
+fn travel_choice_is_confirmed_outside_model_and_text_pause_stops_work() {
+    let r=trip_run(r#"
+        trip_state="asking";trip_question_key="dates";trip_brief="北京"
+        send_trip_text("2026-10-17 至 2026-10-18")
+        send_trip_text("暂停")
+        pending[0].callback({is_ok:true data:{events:[] system_events:[]}})
+        {state:trip_state answers:trip_answers calls:pending.len()}.to_json()
+    "#);
+    assert_eq!(r["state"],"paused");assert_eq!(r["answers"][0]["key"],"dates");assert_eq!(r["calls"],1);
 }

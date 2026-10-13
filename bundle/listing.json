@@ -18,16 +18,16 @@
     "screenshots/mine.png",
     "screenshots/family.png"
   ],
-  "icon": "assets/daycast.svg",
+  "icon": "assets/daycast.png",
   "platforms": [
     "windows"
   ],
   "publisher": {
     "name": "buqizixv",
     "support": "https://github.com/buqizixv/shaotangjiabing/issues",
-    "privacy_policy_url": "https://github.com/buqizixv/shaotangjiabing/blob/main/octoscript-weather-assistant/PRIVACY.md"
+    "privacy_policy_url": "https://github.com/buqizixv/shaotangjiabing/blob/main/README.md#数据权限与隐私"
   },
-  "release_notes": "0.4.4：完成全部 Daycast 页面的原生 UI 改版，统一字体、图标、卡片、响应式布局和表单；完善真实预报、跨天日程及家庭提醒设置。",
+  "release_notes": "0.8.6：修复首页家人天气提醒确认无响应的问题，确认后交由 Rinx 展示并确认发送，Daycast 显示等待、成功或失败状态；问答新增本机会话历史与重启后恢复。",
   "age_rating": "all",
   "license": "Apache-2.0"
 }
