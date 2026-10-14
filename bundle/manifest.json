@@ -19,7 +19,7 @@
   ],
   "id": "weather-assistant",
   "integrity": {
-    "bundle_blake3": "5cee04960641532fc6eb402638229a377d00cdc80fa565d3cec00cda8622d426"
+    "bundle_blake3": "b98177c5b94b8fe1a1e5b71cdcbad8049e47906915ed3caf631f24871abc2531"
   },
   "name": "Daycast",
   "network": {
@@ -34,3 +34,4 @@
   },
   "version": "0.8.6"
 }
+

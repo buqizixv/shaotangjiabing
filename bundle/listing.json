@@ -14,9 +14,11 @@
   ],
   "screenshots": [
     "screenshots/today.png",
-    "screenshots/sky.png",
+    "screenshots/chat.png",
+    "screenshots/travel.png",
     "screenshots/mine.png",
-    "screenshots/family.png"
+    "screenshots/family.png",
+    "screenshots/rinx.png"
   ],
   "icon": "assets/daycast.png",
   "platforms": [
@@ -31,3 +33,4 @@
   "age_rating": "all",
   "license": "Apache-2.0"
 }
+
