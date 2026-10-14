@@ -16,6 +16,12 @@
 
 **Daycast，让天气进入今天的安排。**
 
+## 讲解视频
+
+**[观看 Daycast 宣传视频 2.0（1 分 30 秒）](https://github.com/buqizixv/shaotangjiabing/releases/download/daycast-video-20261014/Daycast-promo-v2.mp4)**
+
+视频 2.0 · 2026-10-14 更新 · 1080p · 1 分 30 秒。
+
 ## Agent 流程
 
 Daycast 的 Agent 闭环：**激活（你说话 / 打开应用 / 日程变更 / 定时轮询）→ 应用打包上下文 → AI 判断（意图、受影响吗、信息够吗）→ AI 提方案（回答 / 草案 / 四类处理卡 / 出行计划）→ 应用校验（失败回喂修正一轮）→ 你确认 → 执行并读回核验 → 继续观察**。
@@ -31,12 +37,6 @@ flowchart TD
     G["⑦ 继续观察<br>天气或日程出现变化<br>满足触发条件，再次评估并提出建议"]
     A --> B --> C --> D --> E --> F --> G
 ```
-
-## 讲解视频
-
-**[观看 Daycast 宣传视频 2.0（1 分 30 秒）](https://github.com/buqizixv/shaotangjiabing/releases/download/daycast-video-20261014/Daycast-promo-v2.mp4)**
-
-视频 2.0 · 2026-10-14 更新 · 1080p · 1 分 30 秒。
 
 ## OctoSense 系统 AI 与 Daycast 如何协作
 
