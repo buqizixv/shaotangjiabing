@@ -34,9 +34,9 @@ flowchart TD
 
 ## 讲解视频
 
-**[观看 Daycast 宣传视频（1 分 30 秒）](https://github.com/buqizixv/shaotangjiabing/releases/download/daycast-video-20261014/Daycast-promo.mp4)**
+**[观看 Daycast 宣传视频 2.0（1 分 30 秒）](https://github.com/buqizixv/shaotangjiabing/releases/download/daycast-video-20261014/Daycast-promo-v2.mp4)**
 
-2026-10-14 更新 · 1080p · 1 分 30 秒。
+视频 2.0 · 2026-10-14 更新 · 1080p · 1 分 30 秒。
 
 ## OctoSense 系统 AI 与 Daycast 如何协作
 
@@ -162,9 +162,9 @@ Daycast 是“应用 bundle + 配套宿主补丁”两件套，完整功能需�
 
 ## 贡献
 
-在开发和联调 Daycast 的过程中，GitHub 账号 [buqizixv](https://github.com/buqizixv) 向 OctoSense 生态提交了问题反馈、接口改进请求、应用投稿与修复 PR，涵盖 Windows 渲染与依赖交付、Rinx 宿主隔离及模型额度默认值等工作。
+在开发和联调 Daycast 的过程中，GitHub 账号 [buqizixv](https://github.com/buqizixv) 向 OctoSense 生态提交了问题反馈、接口改进请求与修复 PR，涵盖 Windows 渲染与依赖交付、Rinx 宿主隔离及模型额度默认值等工作。
 
-截至 **2026-10-14**，共 **17 条 Issue：16 条开放，1 条已关闭**。状态以原 Issue 的最新记录为准。
+截至 **2026-10-14**，本节列出 **16 条 Issue：15 条开放，1 条已关闭**。状态以原 Issue 的最新记录为准。
 
 ### 近期代码贡献（OctoSense PR）
 
@@ -196,9 +196,3 @@ Daycast 是“应用 bundle + 配套宿主补丁”两件套，完整功能需�
 | Issue | 问题或请求 | 当前状态 |
 | --- | --- | --- |
 | [#2674](https://github.com/octos-org/octos/issues/2674) | 请求 peer/prepare 返回可安全展示的模型名称。 | 已完成关闭；关联 [PR #2711](https://github.com/octos-org/octos/pull/2711) |
-
-### App Hub：应用投稿
-
-| Issue | 问题或请求 | 当前状态 |
-| --- | --- | --- |
-| [#111](https://github.com/OctoSense-org/OctoSense-App-Hub/issues/111) | 提交 Daycast / weather-assistant 0.4.3 到 App Hub，已有初步评审回复。 | 开放；已有评审反馈 |
