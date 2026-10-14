@@ -34,9 +34,9 @@ flowchart TD
 
 ## 讲解视频
 
-0.8.6 讲解视频录制中，稍后更新。
+**[观看 Daycast 宣传视频（1 分 30 秒）](https://github.com/buqizixv/shaotangjiabing/releases/download/daycast-video-20261014/Daycast-promo.mp4)**
 
-旧版宣传片（画面基于 0.4.3，与当前界面有差异，不作为完整实测的证明）：**[观看 Daycast × Onway 宣传片（2 分 40 秒）](https://github.com/buqizixv/shaotangjiabing/releases/download/v0.4.3/Daycast-Onway-promo-remix.mp4)**
+2026-10-14 更新 · 1080p · 1 分 30 秒。
 
 ## OctoSense 系统 AI 与 Daycast 如何协作
 
