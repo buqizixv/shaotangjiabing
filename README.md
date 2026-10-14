@@ -162,14 +162,21 @@ Daycast 是“应用 bundle + 配套宿主补丁”两件套，完整功能需�
 
 ## 贡献
 
-在开发和联调 Daycast 的过程中，GitHub 账号 [buqizixv](https://github.com/buqizixv) 向 OctoSense 生态提交了以下问题反馈、接口改进请求和应用投稿，涵盖 Windows 渲染与依赖交付、应用托管、模型状态协议及发布流程。
+在开发和联调 Daycast 的过程中，GitHub 账号 [buqizixv](https://github.com/buqizixv) 向 OctoSense 生态提交了问题反馈、接口改进请求、应用投稿与修复 PR，涵盖 Windows 渲染与依赖交付、Rinx 宿主隔离及模型额度默认值等工作。
 
-截至 **2026-10-13**，共 **15 条 Issue：14 条开放，1 条已完成关闭**。状态以原 Issue 的最新记录为准。
+截至 **2026-10-14**，共 **17 条 Issue：16 条开放，1 条已关闭**。状态以原 Issue 的最新记录为准。
+
+### 近期代码贡献（OctoSense PR）
+
+- **[PR #537：Rinx 宿主 UI Root 隔离修复](https://github.com/OctoSense-org/OctoSense/pull/537)**：修复非主 Splash VM 的 UI Root 被写入进程全局树后，确认 Daycast 提醒会导致 Rinx 绘制崩溃的问题；增加真实 Rinx 提醒流程的回归测试。关联 [Issue #536](https://github.com/OctoSense-org/OctoSense/issues/536)。PR 当前开放。
+- **[PR #539：提高默认每日模型 token 额度](https://github.com/OctoSense-org/OctoSense/pull/539)**：将每个应用的默认每日额度从 100,000 提高到 300,000，同时保留调用次数限制和应用显式覆盖，并增加默认值回归测试。关联 [Issue #538](https://github.com/OctoSense-org/OctoSense/issues/538)。PR 当前开放。
 
 ### OctoSense：桌面体验与宿主集成
 
 | Issue | 问题或请求 | 当前状态 |
 | --- | --- | --- |
+| [#538](https://github.com/OctoSense-org/OctoSense/issues/538) | 请求提高每个应用的默认每日模型 token 额度，保留调用次数限制与显式覆盖。 | 开放；关联 [PR #539](https://github.com/OctoSense-org/OctoSense/pull/539) |
+| [#536](https://github.com/OctoSense-org/OctoSense/issues/536) | 反馈确认 Daycast 家庭天气提醒后，Rinx 宿主模块在绘制时崩溃。 | 开放；关联 [PR #537](https://github.com/OctoSense-org/OctoSense/pull/537) |
 | [#530](https://github.com/OctoSense-org/OctoSense/issues/530) | 请求 Windows 摄像头预览/拍摄支持，以及可发现的运行时能力状态。 | 开放 |
 | [#527](https://github.com/OctoSense-org/OctoSense/issues/527) | 反馈 Splash 页面初次打开时部分文字缺失、等待后恢复的偶发现象。 | 开放 |
 | [#526](https://github.com/OctoSense-org/OctoSense/issues/526) | 反馈本地 release 启动缺少 WebView2Loader.dll，并请求核查依赖交付流程。 | 开放 |
